@@ -241,12 +241,69 @@ The limits 215 V, 245 V and 20 A in `pq_data.py` are fixed in the code. They do 
 
 The pages are plain HTML, CSS and SVG with no library. They are dark only.
 
-- **Statistics (`/`, `ui.html`).** Cards for NOW, DAY, WEEK, MONTH, YEAR, MONTH SEK and power quality. The page refreshes
-  `/stats` and `/history` every 10 seconds. The chart shows the selected period with a hover tooltip. The `<` and `>` buttons move
-  one day, week or year back. Below the chart are the voltage and the current of each phase.
-- **Power quality (`/power-quality`, `pq_page.py`).** Window buttons (6 h, 24 h, 72 h, 1 week, 1 month). Three phase cards, four
-  summary cards, five charts (voltage, current, current imbalance, minute maximum power, voltage spread ΔV) and the table
-  "Anomalies & peaks".
+The screenshots below come from a live install. They were taken from an earlier version with Swedish labels for the titles,
+the voltage and current charts, the monthly cost, the window buttons and the table. The card names (NOW, DAY, WEEK, MONTH, YEAR)
+and the layout are the same as in this repository.
+
+### Statistics (`/`, `ui.html`)
+
+The page refreshes `/stats` and `/history` every 10 seconds. The cards at the top are buttons. Each card shows one total and,
+below it, the cost. The card that is selected decides what the chart shows. The `<` and `>` buttons move one day, week, month
+or year back. The last card links to the power quality page and shows the lowest and highest voltage of the last 24 hours and
+the highest current.
+
+**NOW and DAY.** NOW shows the power at this moment in watts and the power of each phase. DAY shows the energy of today in kWh
+and its cost. Both draw the power of one day as an area chart with a tooltip. The two charts below it show the voltage and
+the current of each phase for the same day. The numbers at the left are the latest values. A heavy load shows up as a spike in
+the current, for example the blue spike at 18:00 in the screenshot, which is one phase carrying a large load.
+
+![NOW card: power over the day](docs/images/ui-now.png)
+
+![DAY card: the same day with the date and the `<` `>` buttons](docs/images/ui-day.png)
+
+**WEEK.** Bars show the kWh of each day of the selected week. The title shows the week number. The line charts below show the
+average voltage and current per phase for each day. In the screenshot only Monday and Tuesday have data, because the week has
+just started. The line charts draw the days without data as 0, which makes a steep drop. This is a known display gap, see
+Known gaps.
+
+![WEEK card: kWh per day, voltage and current per day](docs/images/ui-week.png)
+
+**MONTH.** Bars show the kWh of each month of the selected year, and `<` and `>` change the year. The card itself shows the
+current month. The line charts below show the monthly averages. Months without data are drawn as 0 here too.
+
+![MONTH card: kWh per day](docs/images/ui-month.png)
+
+**YEAR.** One bar for each year that has data. The line charts below connect the yearly averages. With only two years they are
+a straight line from 0, which says nothing yet.
+
+![YEAR card: kWh per month](docs/images/ui-year.png)
+
+**MONTH SEK.** The same months as bars, but the values and the total at the top right are the cost in kronor. The winter months
+are the highest, which is what an electrically heated house looks like. The price comes from
+`tariff_mod.py`: a fixed price per kWh, or the spot price.
+
+![MONTH SEK card: cost](docs/images/ui-month-cost.png)
+
+### Power quality (`/power-quality`, `pq_page.py`)
+
+The buttons at the top right choose the window: 6 h, 24 h, 72 h, 1 week, 1 month. The button `Statistics` goes back.
+
+- **Three phase cards.** The lowest and the highest voltage of the phase, the spread between them (`Span`), and the highest
+  current. The current is green when it is normal and turns orange when it is high.
+- **Four summary cards.** The peak power and when it happened, the largest voltage difference between phases (ΔV), the
+  voltage history (how many samples were below 215 V or above 245 V, and the number of samples), and the number of current peaks of 20 A or more.
+- **Charts.** Voltage per phase with the 215 V limit as a dashed line, current per phase with the 20 A limit, phase balance
+  (the largest current minus the smallest current), the total active power as a maximum for each minute with the 9500 W
+  limit, and the voltage spread ΔV with the 8 V limit. The dashed red lines are the limits that the alarms use.
+- **Table "Anomalies & peaks".** The newest measurements that crossed a limit: time, voltage and current of each phase, ΔV and
+  power. A voltage outside 215–245 V is red, and a high current is orange.
+
+![Power quality page, 24 hours](docs/images/pq-overview.png)
+
+![Voltage spread chart and the Anomalies & peaks table](docs/images/pq-events.png)
+
+The screenshots show real consumption data of one house. Remove or replace them if you make the repository public and the data
+should not be shared.
 
 ## Design tokens
 
@@ -487,3 +544,5 @@ request. Where a test can show the gap, it is an `expectedFailure` test until th
 10. **The database only grows.** Nothing deletes or shrinks old rows, and each row keeps the whole `raw_json`. A rule that keeps
     the full rows for some months and then only the columns the pages use, or an archive, would stop the growth. It breaks the
     rule that the program never changes a measurement, so it needs a decision.
+11. **The line charts of the week, month and year views draw a period without data as 0.** A missing day or month should leave a
+    gap in the line, not a drop to 0 V and 0 A. The fix is in `ui.html`: skip the null values when the path is drawn.

@@ -10,6 +10,21 @@ It uses the Python 3 standard library only. Nothing to install with `pip`.
 > the program does, adjusts the installation and runs it on their own network. See
 > [AI assistance](AGENTS.md#ai-assistance) for who did what and how the result is checked.
 
+## What it looks like
+
+Screenshots from a live install. They were taken from an earlier version with Swedish labels. The labels in this repository
+are English. The page and card layout is the same.
+
+![Statistics page: power over the day, voltage and current per phase](docs/images/ui-day.png)
+
+The statistics page (`/`). The cards at the top choose the period. The chart shows the power of one day, with the voltage and
+the current of each phase below it.
+
+![Power quality page: 24 hours of voltage, current, imbalance and peak power](docs/images/pq-overview.png)
+
+The power quality page (`/power-quality`). It shows the voltage range and the current peaks of each phase over the chosen
+window. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#pages) for every card and chart.
+
 ## Install
 
 On a Debian host, as root, from the unpacked repository:
