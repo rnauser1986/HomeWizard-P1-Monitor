@@ -170,7 +170,7 @@ its memory stays small. It catches every exception and prints `[SIGNAL_ERR] ...`
 **Rules**
 
 - Every route is open. Reach the server only through the home network or an access service (see Architecture).
-- Bound every input from a request. `hours` is 1 to `HW_PQ_MAX_HOURS` (168 by default). `offset` is a whole number and the server
+- Bound every input from a request. `hours` is 1 to `HW_PQ_MAX_HOURS` (720 by default). `offset` is a whole number and the server
   limits it to a safe range.
   A bad value gives the default, not an error.
 - An unexpected error in a route gives HTTP 500 with the body `{"error":"internal error"}` and the log line `[HTTP_ERR] <path>: ...`.
@@ -181,7 +181,7 @@ its memory stays small. It catches every exception and prints `[SIGNAL_ERR] ...`
 
 `pq_data.py` `get_power_quality(db_path, hours)` analyses the last 1 to 720 hours. The default is 24. It keeps each answer in
 memory for `HW_PQ_CACHE_TTL_SEC` seconds for each combination of file and hours. The web server asks for at most `HW_PQ_MAX_HOURS`
-hours (168 by default). See Known gaps.
+hours (720 by default, one month).
 
 The bucket size grows with the window:
 
@@ -279,7 +279,7 @@ the log only.
 | `HW_PQ_POWER_PEAK_W` | 9500.0 | Power limit (W) marked on the power quality page |
 | `HW_PQ_DV_WARN_V` | 8.0 | Voltage spread limit ΔV (V) |
 | `HW_PQ_CACHE_TTL_SEC` | 20.0 | Seconds the power quality answer stays in memory |
-| `HW_PQ_MAX_HOURS` | 168 | The longest window the server allows, in hours (1 to 720) |
+| `HW_PQ_MAX_HOURS` | 720 | The longest window the server allows, in hours (1 to 720) |
 | `HW_PRICE_AREA` | `SE3` | Bidding zone `SE1` to `SE4` |
 | `HW_TARIFF_START_DATE` | `2026-11-01` | Before this date the fixed price always applies |
 | `HW_DEFAULT_FIXED_SEK` | 1.5 | Fixed price in SEK per kWh, and the fallback price |
@@ -330,6 +330,8 @@ What is different from the older install:
 
 - The alarm messages and the pages are in English. The Signal messages change too.
 - The settings come from `.env`. A setting that is missing is the default in `config.py`, not the value of the older install.
+- The power quality page can show 720 hours (the "1 month" button). The older install stopped at 168 hours, so the button showed one
+  week. Set `HW_PQ_MAX_HOURS=168` to keep the old limit.
 - The standby kWh of the now and day views counts one minute for each point. The older code used the poll interval for these
   points, which are minute averages.
 - The collector writes `[POLL_ERR]` instead of `Fel vid pollning`, and prints `[CONFIG]` lines at the start.
@@ -426,9 +428,7 @@ request. Where a test can show the gap, it is an `expectedFailure` test until th
 6. **A page request can wait for the price service.** In `dynamic` mode, `effective_rate` calls `elprisetjustnu.se` (two calls with a
    timeout of 6 s) when a spot price is missing, at most once in `HW_TARIFF_SYNC_COOLDOWN` seconds. A failed call leaves no log line.
 7. **The server has no sign-in** and listens on all interfaces by default. See Architecture.
-8. **The "1 month" button shows one week.** The button asks for 720 hours. The server allows `HW_PQ_MAX_HOURS`, 168 by default, which
-   is the limit of the older install. Set `HW_PQ_MAX_HOURS=720` to see a month, or take the button out. The user decides.
-9. **Two queries build SQL text with f-strings:** `d_sel` in the day view and `d0` in the week view of `history()`. The values come
+8. **Two queries build SQL text with f-strings:** `d_sel` in the day view and `d0` in the week view of `history()`. The values come
    from SQLite, not from the request, so there is no injection today. They break the placeholder rule.
-10. **Some code closes a SQLite connection only when nothing fails.** `stats()`, `history()` and `/health` in `api_server.py`, and
+9. **Some code closes a SQLite connection only when nothing fails.** `stats()`, `history()` and `/health` in `api_server.py`, and
     `get_power_quality()` in `pq_data.py`, call `close()` at the end, not in `finally`. Read from the code, not run.

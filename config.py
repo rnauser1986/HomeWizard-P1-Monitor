@@ -74,7 +74,7 @@ PQ_POWER_PEAK_W = float(os.getenv("HW_PQ_POWER_PEAK_W", "9500.0"))
 PQ_DV_WARN_V = float(os.getenv("HW_PQ_DV_WARN_V", "8.0"))
 PQ_CACHE_TTL_SEC = float(os.getenv("HW_PQ_CACHE_TTL_SEC", "20.0"))
 # The longest window the server allows, in hours (1 to 720).
-PQ_MAX_HOURS = max(1, min(int(os.getenv("HW_PQ_MAX_HOURS", "168")), 720))
+PQ_MAX_HOURS = max(1, min(int(os.getenv("HW_PQ_MAX_HOURS", "720")), 720))
 
 # Electricity price and tariff
 DEFAULT_PRICE_AREA = os.getenv("HW_PRICE_AREA", "SE3")

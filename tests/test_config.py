@@ -73,7 +73,7 @@ class DefaultsTests(unittest.TestCase):
         self.assertEqual(d["POLL_INTERVAL_SEC"], "10")
         self.assertEqual(d["ALARM_PHASE_LIMIT_A"], "20.0")
         self.assertEqual(d["ALARM_VOLTAGE_LOW_V"], "215.0")
-        self.assertEqual(d["PQ_MAX_HOURS"], "168")
+        self.assertEqual(d["PQ_MAX_HOURS"], "720")
         self.assertEqual(d["SIGNAL_COOLDOWN_SEC"], "30.0")
 
     def test_the_environment_changes_a_value(self):
