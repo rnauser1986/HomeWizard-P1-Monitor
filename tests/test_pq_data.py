@@ -1,4 +1,6 @@
+import sqlite3
 import unittest
+from unittest import mock
 
 from tests.helpers import fresh, make_db, timedelta, utc_now
 
@@ -66,6 +68,49 @@ class PowerQualityTests(unittest.TestCase):
         path = make_db([{"ts": utc_now(), "w": 1}])
         first = self.mod.get_power_quality(path, 24)
         self.assertIs(self.mod.get_power_quality(path, 24), first)
+
+
+class ConnectionClosingTests(unittest.TestCase):
+    """get_power_quality closes the database also when a query fails."""
+
+    def setUp(self):
+        self.mod = fresh("pq_data")
+        self.mod._CACHE.clear()
+        self.path = make_db([{"ts": utc_now(), "w": 1000, **NORMAL}])
+
+    def run_with_tracking(self, fail):
+        opened = []
+
+        class Tracked(sqlite3.Connection):
+            closed = False
+
+            def close(self):
+                self.closed = True
+                super().close()
+
+        real_connect = sqlite3.connect
+
+        def connect(path, timeout=5.0):
+            c = real_connect(path, timeout=timeout, factory=Tracked)
+            opened.append(c)
+            return c
+
+        with mock.patch.object(self.mod.sqlite3, "connect", connect):
+            if fail:
+                with mock.patch.object(self.mod, "_bucket_expr", return_value=(1, "BROKEN SQL")):
+                    with self.assertRaises(sqlite3.Error):
+                        self.mod.get_power_quality(self.path, 24)
+            else:
+                self.mod.get_power_quality(self.path, 24)
+        return opened
+
+    def test_it_closes_after_success(self):
+        opened = self.run_with_tracking(fail=False)
+        self.assertTrue(opened and all(c.closed for c in opened))
+
+    def test_it_closes_when_a_query_fails(self):
+        opened = self.run_with_tracking(fail=True)
+        self.assertTrue(opened and all(c.closed for c in opened))
 
 
 class VoltageSpreadTests(unittest.TestCase):

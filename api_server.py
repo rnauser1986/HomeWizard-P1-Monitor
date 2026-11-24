@@ -43,11 +43,12 @@ def cur_keys(cur):
     return row["d"], row["w"], row["m"], row["y"]
 
 
-def m_kwh(cur, where_sql):
+def m_kwh(cur, where_sql, params=()):
     r = cur.execute(
         "SELECT ROUND(MAX(total_power_import_kwh)-MIN(total_power_import_kwh),3) v FROM measurements WHERE ("
         + where_sql
-        + ") AND (raw_json IS NULL OR raw_json NOT LIKE '%source%csv_import%')"
+        + ") AND (raw_json IS NULL OR raw_json NOT LIKE '%source%csv_import%')",
+        params,
     ).fetchone()
     return float(r["v"] or 0.0)
 
@@ -81,8 +82,7 @@ def current_rate_sek(cur):
         return float(DEFAULT_FIXED_SEK)
 
 
-def stats():
-    c = conn()
+def _stats(c):
     cur = c.cursor()
     latest = cur.execute(
         "SELECT active_power_w, active_power_l1_w, active_power_l2_w, active_power_l3_w "
@@ -139,7 +139,6 @@ def stats():
         + y_day_sum,
         3,
     )
-    c.close()
 
     now_w = int(latest["active_power_w"]) if latest and latest["active_power_w"] is not None else 0
     l1 = int(latest["active_power_l1_w"]) if latest and latest["active_power_l1_w"] is not None else 0
@@ -160,6 +159,14 @@ def stats():
         "year_kwh": year_kwh,
         "year_sek": round(year_kwh * rate, 2),
     }
+
+
+def stats():
+    c = conn()
+    try:
+        return _stats(c)
+    finally:
+        c.close()
 
 
 def merge_sorted(rm, hm, rate, label_fn=None):
@@ -266,14 +273,12 @@ def calc_standby_from_w(cur, where_sql, params):
     return sb_w, sb_kwh
 
 
-def history(p, qs):
-    c = conn()
+def _history(c, p, qs):
     cur = c.cursor()
     rate = current_rate_sek(cur)
     if p == "now":
         rows = cur.execute("SELECT strftime('%H:%M',ts_utc,'localtime') AS label,ROUND(AVG(active_power_w),0) AS val FROM measurements WHERE date(ts_utc,'localtime')=date('now','localtime') GROUP BY strftime('%Y-%m-%d %H:%M',ts_utc,'localtime') ORDER BY label ASC").fetchall()
         ph = build_phases(cur, p, qs)
-        c.close()
         pts_out = [{"label": r["label"], "val": int(r["val"] or 0), "sek": round(((r["val"] or 0) / 1000.0) * rate, 2)} for r in rows]
         sb_w, sb_kwh, sb_sek = calc_standby(pts_out, rate)
         return {"period": "now", "chart": "area", "unit": "W", "standby_w": sb_w, "standby_kwh": sb_kwh, "standby_sek": sb_sek, "points": pts_out, "phases": ph}
@@ -282,11 +287,10 @@ def history(p, qs):
         d_sel = cur.execute("SELECT date('now','localtime',?||' days') d", (off,)).fetchone()["d"]
         rows = cur.execute("SELECT strftime('%H:%M',ts_utc,'localtime') AS label,ROUND(AVG(active_power_w),0) AS val FROM measurements WHERE date(ts_utc,'localtime')=? GROUP BY strftime('%Y-%m-%d %H:%M',ts_utc,'localtime') ORDER BY label ASC", (d_sel,)).fetchall()
         dk, _, _, _ = cur_keys(cur)
-        mk_d = m_kwh(cur, f"date(ts_utc,'localtime')='{d_sel}'")
+        mk_d = m_kwh(cur, "date(ts_utc,'localtime')=?", (d_sel,))
         extra_h = h_kwh(cur, "day", dk) if off == 0 else (h_kwh(cur, "day", d_sel) if mk_d == 0.0 else 0.0)
         dkwh = round(mk_d + extra_h, 3)
         ph = build_phases(cur, p, qs)
-        c.close()
         pts_out = [{"label": r["label"], "val": int(r["val"] or 0), "sek": round(((r["val"] or 0) / 1000.0) * rate, 2)} for r in rows]
         sb_w, sb_kwh, sb_sek = calc_standby(pts_out, rate)
         return {"period": "day", "chart": "area", "unit": "W", "offset": off, "date": d_sel, "total_kwh": dkwh, "total_sek": round(dkwh * rate, 2), "standby_w": sb_w, "standby_kwh": sb_kwh, "standby_sek": sb_sek, "points": pts_out, "phases": ph}
@@ -299,12 +303,11 @@ def history(p, qs):
         rows = cur.execute("SELECT date(ts_utc,'localtime') d,ROUND(MAX(total_power_import_kwh)-MIN(total_power_import_kwh),3) v FROM measurements WHERE date(ts_utc,'localtime') BETWEEN ? AND date(?,'+6 days') AND (raw_json IS NULL OR raw_json NOT LIKE '%source%csv_import%') GROUP BY d", (d0, d0)).fetchall()
         rm = {r["d"]: float(r["v"] or 0.0) for r in rows}
         hm = h_map(cur, "day")
-        wkwh = round(m_kwh(cur, f"date(ts_utc,'localtime') BETWEEN '{d0}' AND date('{d0}','+6 days')") + sum(hm.get(d, 0.0) for d in days), 3)
+        wkwh = round(m_kwh(cur, "date(ts_utc,'localtime') BETWEEN ? AND date(?,'+6 days')", (d0, d0)) + sum(hm.get(d, 0.0) for d in days), 3)
         ph = build_phases(cur, p, qs)
         pts = [{"label": lbls[i], "date_lbl": f"{lbls[i]} {int(d.split('-')[2])} {ms.get(d.split('-')[1], d.split('-')[1])}", "val": round(rm.get(d, 0.0) + hm.get(d, 0.0), 3), "sek": round((rm.get(d, 0.0) + hm.get(d, 0.0)) * rate, 2)} for i, d in enumerate(days)]
         wk_no = date.fromisoformat(d0).isocalendar()[1]
         sb_w, sb_kwh = calc_standby_from_w(cur, "date(ts_utc,'localtime') BETWEEN ? AND date(?,'+6 days')", (d0, d0))
-        c.close()
         return {"period": "week", "chart": "bar", "unit": "kWh", "offset": off, "week": wk_no, "week_label": f"week {wk_no}", "start_date": d0, "end_date": days[-1], "total_kwh": wkwh, "total_sek": round(wkwh * rate, 2), "standby_w": sb_w, "standby_kwh": sb_kwh, "points": pts, "phases": ph}
     if p == "month":
         off = int_arg(qs, "offset", 0, -3650, 0)
@@ -327,7 +330,6 @@ def history(p, qs):
         mkwh = round(sum(x["val"] for x in pts), 3)
         ph = build_phases(cur, p, qs)
         sb_w, sb_kwh = calc_standby_from_w(cur, "strftime('%Y',ts_utc,'localtime')=?", (yr_sel,))
-        c.close()
         return {"period": "month", "chart": "bar", "unit": "kWh", "offset": off, "year": yr_sel, "month_label": yr_sel, "total_kwh": mkwh, "total_sek": round(mkwh * rate, 2), "standby_w": sb_w, "standby_kwh": sb_kwh, "points": pts, "phases": ph}
     if p == "year":
         rows = cur.execute("SELECT strftime('%Y',ts_utc,'localtime') k,ROUND(MAX(total_power_import_kwh)-MIN(total_power_import_kwh),3) v FROM measurements WHERE (raw_json IS NULL OR raw_json NOT LIKE '%source%csv_import%') GROUP BY k ORDER BY k").fetchall()
@@ -339,10 +341,16 @@ def history(p, qs):
         pts = merge_sorted({r["k"]: float(r["v"] or 0.0) for r in rows}, ym, rate)
         ph = build_phases(cur, p, qs)
         sb_w, sb_kwh = calc_standby_from_w(cur, "1=1", ())
-        c.close()
         return {"period": "year", "chart": "bar", "unit": "kWh", "standby_w": sb_w, "standby_kwh": sb_kwh, "points": pts, "phases": ph}
-    c.close()
     return {"period": p, "chart": "bar", "unit": "kWh", "points": []}
+
+
+def history(p, qs):
+    c = conn()
+    try:
+        return _history(c, p, qs)
+    finally:
+        c.close()
 
 
 class H(BaseHTTPRequestHandler):
@@ -381,12 +389,14 @@ class H(BaseHTTPRequestHandler):
         elif path == "/health":
             try:
                 c = conn()
-                row = c.execute(
-                    "SELECT MAX(ts_utc) AS latest_utc, "
-                    "(strftime('%s','now') - strftime('%s', MAX(ts_utc))) AS age_sec "
-                    "FROM measurements"
-                ).fetchone()
-                c.close()
+                try:
+                    row = c.execute(
+                        "SELECT MAX(ts_utc) AS latest_utc, "
+                        "(strftime('%s','now') - strftime('%s', MAX(ts_utc))) AS age_sec "
+                        "FROM measurements"
+                    ).fetchone()
+                finally:
+                    c.close()
                 latest_utc = row["latest_utc"] if row else None
                 age_sec = int(row["age_sec"]) if row and row["age_sec"] is not None else None
                 max_age_sec = HEALTH_MAX_AGE_SEC

@@ -428,7 +428,6 @@ request. Where a test can show the gap, it is an `expectedFailure` test until th
 6. **A page request can wait for the price service.** In `dynamic` mode, `effective_rate` calls `elprisetjustnu.se` (two calls with a
    timeout of 6 s) when a spot price is missing, at most once in `HW_TARIFF_SYNC_COOLDOWN` seconds. A failed call leaves no log line.
 7. **The server has no sign-in** and listens on all interfaces by default. See Architecture.
-8. **Two queries build SQL text with f-strings:** `d_sel` in the day view and `d0` in the week view of `history()`. The values come
-   from SQLite, not from the request, so there is no injection today. They break the placeholder rule.
-9. **Some code closes a SQLite connection only when nothing fails.** `stats()`, `history()` and `/health` in `api_server.py`, and
-    `get_power_quality()` in `pq_data.py`, call `close()` at the end, not in `finally`. Read from the code, not run.
+8. **Two helpers put SQL text from the caller into a query.** `m_kwh` and `calc_standby_from_w` in `api_server.py` take the
+   `WHERE` text as an argument. The callers pass fixed text from the code, and every date goes in as a `?` parameter. A caller must
+   never pass text from a request. Tests check that `m_kwh` takes parameters.

@@ -153,6 +153,97 @@ class RouteTests(ServerTestCase):
         self.assertEqual(self.get("/nope")[0], 404)
 
 
+class TrackedConnection(sqlite3.Connection):
+    """A connection that remembers that it was closed."""
+
+    closed = False
+
+    def close(self):
+        self.closed = True
+        super().close()
+
+
+class ConnectionClosingTests(unittest.TestCase):
+    """Every function that opens the database closes it, also when a query fails."""
+
+    def setUp(self):
+        self.api = fresh("api_server")
+        self.path = make_db([{**LIVE_ROW, "ts": utc_now()}])
+        self.opened = []
+
+        def tracked_conn():
+            c = sqlite3.connect(self.path, timeout=5.0, factory=TrackedConnection)
+            c.row_factory = sqlite3.Row
+            self.opened.append(c)
+            return c
+
+        patcher = mock.patch.object(self.api, "conn", tracked_conn)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def assert_all_closed(self):
+        self.assertTrue(self.opened)
+        self.assertTrue(all(c.closed for c in self.opened))
+
+    def test_stats_closes_after_success(self):
+        self.api.stats()
+        self.assert_all_closed()
+
+    def test_stats_closes_when_a_query_fails(self):
+        with mock.patch.object(self.api, "current_rate_sek", side_effect=RuntimeError("boom")):
+            with self.assertRaises(RuntimeError):
+                self.api.stats()
+        self.assert_all_closed()
+
+    def test_every_history_period_closes_after_success(self):
+        for period in ("now", "day", "week", "month", "year", "nonsense"):
+            self.opened.clear()
+            self.api.history(period, {})
+            self.assert_all_closed()
+
+    def test_every_history_period_closes_when_a_query_fails(self):
+        with mock.patch.object(self.api, "current_rate_sek", side_effect=RuntimeError("boom")):
+            for period in ("now", "day", "week", "month", "year"):
+                self.opened.clear()
+                with self.assertRaises(RuntimeError):
+                    self.api.history(period, {})
+                self.assert_all_closed()
+
+
+class PlaceholderTests(unittest.TestCase):
+    """The day and week queries pass their dates as parameters, not as SQL text."""
+
+    def setUp(self):
+        self.api = fresh("api_server")
+
+    def test_m_kwh_takes_parameters(self):
+        now = utc_now()
+        path = make_db([{"ts": now - timedelta(minutes=10 * i), "kwh": 10.0 - i} for i in range(5)])
+        conn = sqlite3.connect(path)
+        conn.row_factory = sqlite3.Row
+        try:
+            day = conn.execute("SELECT date(?,'localtime') d", (now.isoformat(),)).fetchone()["d"]
+            self.assertEqual(self.api.m_kwh(conn.cursor(), "date(ts_utc,'localtime')=?", (day,)), 4.0)
+            self.assertEqual(self.api.m_kwh(conn.cursor(), "date(ts_utc,'localtime')=?", ("1999-01-01",)), 0.0)
+        finally:
+            conn.close()
+
+    def test_a_value_with_a_quote_does_not_change_the_query(self):
+        path = make_db([{"ts": utc_now(), "kwh": 5.0}])
+        conn = sqlite3.connect(path)
+        conn.row_factory = sqlite3.Row
+        try:
+            self.assertEqual(self.api.m_kwh(conn.cursor(), "date(ts_utc,'localtime')=?", ("x' OR '1'='1",)), 0.0)
+        finally:
+            conn.close()
+
+    def test_no_date_is_written_into_the_sql_text(self):
+        with open(self.api.__file__, encoding="utf-8") as f:
+            source = f.read()
+        self.assertNotIn("{d_sel}", source)
+        self.assertNotIn("{d0}", source)
+
+
 class HealthTests(unittest.TestCase):
     def health(self, rows):
         path = make_db(rows)
