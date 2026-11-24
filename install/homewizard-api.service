@@ -1,0 +1,13 @@
+[Unit]
+Description=HomeWizard P1 Web & API Server
+After=network-online.target homewizard-collector.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/homewizard
+ExecStart=/usr/bin/python3 /opt/homewizard/api_server.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

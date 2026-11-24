@@ -1,0 +1,14 @@
+[Unit]
+Description=HomeWizard P1 Telemetry Collector
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/homewizard
+ExecStart=/usr/bin/python3 /opt/homewizard/collector.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,6 @@
+[Unit]
+Description=HomeWizard P1 database and source backup
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/backup-homewizard-db.sh
