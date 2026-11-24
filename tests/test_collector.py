@@ -181,7 +181,7 @@ class ShutdownTests(unittest.TestCase):
              mock.patch.object(self.mod, "warn_if_not_set_up"), \
              mock.patch.object(self.mod, "poll_once"), \
              mock.patch.object(self.mod.time, "sleep", side_effect=sleep_error):
-            with self.assertRaises(BaseException):
+            with self.assertRaises((KeyboardInterrupt, SystemExit, MemoryError)):
                 self.mod.main()
         return conn
 

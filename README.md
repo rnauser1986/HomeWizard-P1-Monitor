@@ -82,6 +82,9 @@ The program has no sign-in. Use it on the home network only, or through a VPN. N
 python3 -m unittest discover -s tests -t . -v
 ```
 
+The GitHub workflow also runs the linter (`ruff check .`) and starts the Docker package against a fake meter
+(`sh tests/e2e/run.sh`). You can run the second check yourself if you have Docker.
+
 ## More
 
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md): how the program is built, every setting, the backup and the known gaps.

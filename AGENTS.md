@@ -79,10 +79,13 @@ pq_route.py                 # Optional Flask blueprint. Not used by the program.
 api_server.py               # The web and API server: pages, /stats, /history, /power-quality, /health
 ui.html                     # The statistics page
 .env.example                # Template for .env. Every setting, with its default
+pyproject.toml              # Settings for ruff, the linter. Not a Python package
+.gitattributes              # Linux line endings for every text file
 Dockerfile                  # One image for both programs. Standard library only. Runs as a user that is not root
 docker-compose.yml          # The services collector and api, and the data volume. HW_METER_URL is required
 .dockerignore               # Keeps .env, databases, tests and docs out of the image
-tests/                      # The only test folder. unittest. One file per area (alarms, notify, collector, config, tariff, pq_data, api_server, install, repo_rules)
+tests/                      # The only test folder. unittest. One file per area (alarms, notify, collector, config, tariff, pq_data, api_server, install, docker, repo_rules)
+  e2e/                      # The check of the Docker package: run.sh, a fake meter and a compose override
 install/
   install.sh                # The install or update on a Debian host: files, units, timer, restart
   migrate-from-old-layout.sh # Move an older install (settings inside the .py files) to .env. Run it before install.sh
@@ -92,7 +95,7 @@ install/
   homewizard-db-backup.timer
   backup-homewizard-db.sh   # Copy and check the database, archive the source, delete old backups
 docs/ARCHITECTURE.md        # How the program is built and what it does: architecture, data, rules, pages, operations
-.github/workflows/build.yml # Build & Test: compile and run the tests (pull requests, merges to main, by hand)
+.github/workflows/build.yml # Build & Test: compile, test, lint, build the image and run it against a fake meter (pull requests, merges to main, by hand)
 .github/pull_request_template.md # What every pull request description has
 .agents/writing.md          # How to write pull requests, issues and comments
 .agents/review.md           # The independent review's checklist
@@ -121,7 +124,9 @@ docs/ARCHITECTURE.md        # How the program is built and what it does: archite
 - **Alarms:** below the threshold, at the threshold, NEED in a row, reset by a normal sample, `None`, cooldown, and independent phases and directions.
 - **Data:** the schema, the kWh totals with and without `csv_import` rows, the `hours` limits and the bucket size.
 - **The rules in this file** are tests too: `tests/test_repo_rules.py` checks English only, no installation value in the files, standard library only, and that `config.py`, `.env.example` and `docs/ARCHITECTURE.md` list the same settings. Add a setting in all three.
-- **The Docker files** are checked by `tests/test_docker.py` (no secret, a non-root user, the data volume, `.env` out of the image). The workflow builds the image. Add every new `.py` file to the `COPY` line of the `Dockerfile`.
+- **The Docker files** are checked by `tests/test_docker.py` (no secret, a non-root user, the data volume, `.env` out of the image). The workflow builds the image and runs `tests/e2e/run.sh`, which starts both services against a fake meter. Add every new `.py` file to the `COPY` line of the `Dockerfile`.
+- **Lint:** the workflow runs `ruff check .` with the rules in `pyproject.toml`. Fix a finding in the code. Do not switch a rule off to make the check pass.
+- **Line endings:** `.gitattributes` gives every text file Linux line endings, so that the shell scripts run on Linux.
 - **The install scripts** are tested in a temporary folder (`tests/test_install.py`). They never touch `/opt` or systemd in a test.
 - **Time:** the clock is a `FakeClock`. Test day, week and month groups across both daylight saving changes. Never a real-time wait.
 - **A known gap is an `expectedFailure` test** with a docstring that points to "Known gaps" in `docs/ARCHITECTURE.md`. When you fix the gap, remove the decorator and the entry in the same pull request.

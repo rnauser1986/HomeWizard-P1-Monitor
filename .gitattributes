@@ -1,0 +1,5 @@
+# Every text file has Linux line endings, also in a Windows checkout.
+# A shell script with Windows line endings does not run on Linux.
+* text=auto eol=lf
+*.png binary
+*.jpg binary

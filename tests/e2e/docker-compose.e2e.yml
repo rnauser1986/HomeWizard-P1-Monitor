@@ -1,0 +1,20 @@
+# Used only by tests/e2e/run.sh, on top of docker-compose.yml.
+# It adds a fake meter and makes the polling and the health check fast.
+# The path of the fake meter is relative to the folder of docker-compose.yml.
+services:
+  meter:
+    image: python:3.12-slim
+    command: ["python", "/fake_meter.py"]
+    volumes:
+      - ./tests/e2e/fake_meter.py:/fake_meter.py:ro
+
+  collector:
+    environment:
+      HW_POLL_INTERVAL_SEC: "1"
+    depends_on:
+      - meter
+
+  api:
+    healthcheck:
+      interval: 2s
+      start_period: 20s

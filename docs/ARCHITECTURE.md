@@ -403,8 +403,15 @@ Compose stops with an error message when `HW_METER_URL` is missing. It does not 
 | Stop | `docker compose down`. The data stays. `docker compose down -v` also deletes the database. |
 | Backup | `docker compose exec collector python -c "import sqlite3; s=sqlite3.connect('/data/homewizard.db'); d=sqlite3.connect('/data/backup.db'); s.backup(d); print(d.execute('PRAGMA integrity_check').fetchone()[0])"`, then `docker compose cp collector:/data/backup.db .` |
 
-An update restarts the services, so the alarm counters start from zero. The GitHub workflow checks the compose file and builds the
-image, but it does not run the containers.
+An update restarts the services, so the alarm counters start from zero.
+
+**The check of the Docker package**
+
+`sh tests/e2e/run.sh` starts both services with a fake meter (`tests/e2e/fake_meter.py`) and checks six things: `/health` becomes
+ok, `/stats` shows the reading of the fake meter, the pages answer, the program does not run as root, the database is in the
+volume, and the collector stops on `SIGTERM` with exit code 0 and without being killed. The GitHub workflow runs it on every push.
+You can run it on your own computer. It needs Docker, `curl` and `python3`, and it never touches a real meter or your database:
+it uses its own project name (`hw-e2e`), port (18085) and volume, and removes them at the end.
 
 **Move the data of a host install into Docker**
 

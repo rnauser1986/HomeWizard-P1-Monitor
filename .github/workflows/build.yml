@@ -24,6 +24,18 @@ jobs:
       - name: Run the tests
         run: python -m unittest discover -s tests -t . -v
 
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - name: Install ruff
+        run: python -m pip install "ruff==0.16.9"
+      - name: Lint
+        run: ruff check .
+
   docker:
     runs-on: ubuntu-latest
     steps:
@@ -34,3 +46,5 @@ jobs:
         run: docker build -t homewizard-p1:ci .
       - name: Check that Python can import the modules in the image
         run: docker run --rm homewizard-p1:ci python -c "import config, api_server, notify_signal, tariff_mod, pq_data, pq_page, alarm_stale"
+      - name: Run both services against a fake meter
+        run: sh tests/e2e/run.sh

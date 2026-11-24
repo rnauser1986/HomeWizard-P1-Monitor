@@ -173,8 +173,8 @@ def merge_sorted(rm, hm, rate, label_fn=None):
     out = []
     for k in sorted(set(rm) | set(hm)):
         v = round(rm.get(k, 0.0) + hm.get(k, 0.0), 3)
-        l = label_fn(k) if label_fn else k
-        out.append({"label": l, "date_lbl": l, "val": v, "sek": round(v * rate, 2)})
+        label = label_fn(k) if label_fn else k
+        out.append({"label": label, "date_lbl": label, "val": v, "sek": round(v * rate, 2)})
     return out
 
 
