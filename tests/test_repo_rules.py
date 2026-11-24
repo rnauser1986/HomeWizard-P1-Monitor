@@ -55,6 +55,18 @@ class RepoRuleTests(unittest.TestCase):
             self.assertIsNone(phone.search(text), f"phone number in {os.path.basename(path)}")
             self.assertIsNone(private_ip.search(text), f"private address in {os.path.basename(path)}")
 
+    def test_every_relative_link_and_image_in_the_documents_points_at_a_file(self):
+        # A path in docs/ARCHITECTURE.md is relative to docs/, not to the root. GitHub shows a broken image otherwise.
+        documents = [os.path.join(ROOT, n) for n in ("README.md", "AGENTS.md")] + glob.glob(os.path.join(ROOT, "docs", "*.md"))
+        link = re.compile(r"\]\(([^)\s]+)\)")
+        for path in documents:
+            for target in link.findall(slurp(path)):
+                if re.match(r"[a-z]+:", target) or target.startswith("#"):
+                    continue
+                file_part = target.split("#", 1)[0]
+                resolved = os.path.normpath(os.path.join(os.path.dirname(path), file_part))
+                self.assertTrue(os.path.exists(resolved), f"{os.path.basename(path)}: {target} is not a file")
+
     def test_only_the_standard_library_is_imported(self):
         local = {os.path.basename(p)[:-3] for p in glob.glob(os.path.join(ROOT, "*.py"))}
         allowed_extra = {"pq_route.py": {"flask"}}     # a known gap, see docs/ARCHITECTURE.md

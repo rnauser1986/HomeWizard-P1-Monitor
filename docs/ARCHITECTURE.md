@@ -257,32 +257,32 @@ and its cost. Both draw the power of one day as an area chart with a tooltip. Th
 the current of each phase for the same day. The numbers at the left are the latest values. A heavy load shows up as a spike in
 the current, for example the blue spike at 18:00 in the screenshot, which is one phase carrying a large load.
 
-![NOW card: power over the day](docs/images/ui-now.png)
+![NOW card: power over the day](images/ui-now.png)
 
-![DAY card: the same day with the date and the `<` `>` buttons](docs/images/ui-day.png)
+![DAY card: the same day with the date and the `<` `>` buttons](images/ui-day.png)
 
 **WEEK.** Bars show the kWh of each day of the selected week. The title shows the week number. The line charts below show the
 average voltage and current per phase for each day. In the screenshot only Monday and Tuesday have data, because the week has
 just started. The line charts draw the days without data as 0, which makes a steep drop. This is a known display gap, see
 Known gaps.
 
-![WEEK card: kWh per day, voltage and current per day](docs/images/ui-week.png)
+![WEEK card: kWh per day, voltage and current per day](images/ui-week.png)
 
 **MONTH.** Bars show the kWh of each month of the selected year, and `<` and `>` change the year. The card itself shows the
 current month. The line charts below show the monthly averages. Months without data are drawn as 0 here too.
 
-![MONTH card: kWh per day](docs/images/ui-month.png)
+![MONTH card: kWh per day](images/ui-month.png)
 
 **YEAR.** One bar for each year that has data. The line charts below connect the yearly averages. With only two years they are
 a straight line from 0, which says nothing yet.
 
-![YEAR card: kWh per month](docs/images/ui-year.png)
+![YEAR card: kWh per month](images/ui-year.png)
 
 **MONTH SEK.** The same months as bars, but the values and the total at the top right are the cost in kronor. The winter months
 are the highest, which is what an electrically heated house looks like. The price comes from
 `tariff_mod.py`: a fixed price per kWh, or the spot price.
 
-![MONTH SEK card: cost](docs/images/ui-month-cost.png)
+![MONTH SEK card: cost](images/ui-month-cost.png)
 
 ### Power quality (`/power-quality`, `pq_page.py`)
 
@@ -298,9 +298,9 @@ The buttons at the top right choose the window: 6 h, 24 h, 72 h, 1 week, 1 month
 - **Table "Anomalies & peaks".** The newest measurements that crossed a limit: time, voltage and current of each phase, ΔV and
   power. A voltage outside 215–245 V is red, and a high current is orange.
 
-![Power quality page, 24 hours](docs/images/pq-overview.png)
+![Power quality page, 24 hours](images/pq-overview.png)
 
-![Voltage spread chart and the Anomalies & peaks table](docs/images/pq-events.png)
+![Voltage spread chart and the Anomalies & peaks table](images/pq-events.png)
 
 The screenshots show real consumption data of one house. Remove or replace them if you make the repository public and the data
 should not be shared.
