@@ -144,8 +144,16 @@ if [ "$WRITE_ENV" -eq 1 ]; then
     echo "Wrote .env. Every other setting has a default. See .env.example to change one."
 fi
 
-echo "Starting the containers (the first build takes a minute)..."
-$DOCKER compose up -d --build
+# In a checkout of the repository (a Dockerfile next to the compose file) the image is built here. A release install has only
+# the compose file, and the image comes from the registry.
+BUILD=""
+if [ -f Dockerfile ]; then
+    BUILD="--build"
+    echo "Starting the containers (the first build takes a minute)..."
+else
+    echo "Starting the containers..."
+fi
+$DOCKER compose up -d $BUILD
 
 PORT="$(sed -n 's/^HW_WEB_PORT=//p' .env | tail -n 1)"
 PORT="${PORT:-8085}"

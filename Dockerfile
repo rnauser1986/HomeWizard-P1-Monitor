@@ -14,6 +14,10 @@ COPY --chown=hw:hw config.py collector.py api_server.py notify_signal.py tariff_
      pq_data.py pq_page.py alarm_imbalance.py alarm_phase_amp.py alarm_spike.py \
      alarm_stale.py alarm_voltage.py ui.html ./
 
+# The files a release install takes from the image (install/get.sh): the compose file and the setup script.
+COPY --chown=hw:hw install/docker-setup.sh /app/install/docker-setup.sh
+COPY --chown=hw:hw install/compose.release.yml /app/install/compose.yml
+
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     HW_DB_PATH=/data/homewizard.db

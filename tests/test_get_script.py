@@ -1,9 +1,9 @@
-"""Tests for install/get.sh. A fake `curl` serves a local archive and a fake `docker` records its calls."""
+"""Tests for install/get.sh. A fake `docker` serves the files of the image and records its calls. No network is used."""
 import os
+import re
 import shutil
 import stat
 import subprocess
-import tarfile
 import tempfile
 import unittest
 
@@ -11,17 +11,15 @@ from tests.helpers import ROOT
 
 SH = shutil.which("sh") or "sh"
 GET = os.path.join(ROOT, "install", "get.sh")
-FAKE_DOCKER = '#!/bin/sh\necho "$@" >> "$FAKE_DOCKER_LOG"\nexit 0\n'
-# Finds the -o argument, records the URL (the last argument) and copies the archive there.
-FAKE_CURL = """#!/bin/sh
-out=""; prev=""; url=""
-for a in "$@"; do
-    [ "$prev" = "-o" ] && out="$a"
-    prev="$a"; url="$a"
-done
-echo "$@" >> "$FAKE_CURL_LOG"
-[ -n "${FAKE_CURL_FAIL:-}" ] && exit 22
-cp "$FAKE_ARCHIVE" "$out"
+# `docker cp reader:/app/install/NAME DEST` copies NAME from the fixture folder.
+FAKE_DOCKER = """#!/bin/sh
+echo "$@" >> "$FAKE_DOCKER_LOG"
+case "$1" in
+    pull) [ -n "${FAKE_PULL_FAIL:-}" ] && exit 1 ;;
+    info) [ -n "${FAKE_DOCKER_DOWN:-}" ] && exit 1 ;;
+    cp) src="${2#*:}"; cp "$FAKE_IMAGE_FILES/${src##*/}" "$3" ;;
+esac
+exit 0
 """
 
 
@@ -31,48 +29,79 @@ def make_executable(path, text):
     os.chmod(path, os.stat(path).st_mode | stat.S_IEXEC)
 
 
-@unittest.skipUnless(shutil.which("sh") and shutil.which("tar"), "needs a POSIX shell and tar")
+@unittest.skipUnless(shutil.which("sh"), "needs a POSIX shell")
 class GetScriptTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.tmp, True)
-        # An archive with one top folder, like the one from GitHub.
-        top = os.path.join(self.tmp, "src", "HomeWizard-P1-Monitor-main")
-        os.makedirs(os.path.join(top, "install"))
-        shutil.copy(os.path.join(ROOT, "install", "docker-setup.sh"), os.path.join(top, "install", "docker-setup.sh"))
-        with open(os.path.join(top, "docker-compose.yml"), "w") as f:
-            f.write("services: {}\n")
-        self.archive = os.path.join(self.tmp, "main.tar.gz")
-        with tarfile.open(self.archive, "w:gz") as tar:
-            tar.add(top, arcname="HomeWizard-P1-Monitor-main")
+        # What the image holds under /app/install: the compose file and the setup script.
+        self.image_files = os.path.join(self.tmp, "image")
+        os.makedirs(self.image_files)
+        shutil.copy(os.path.join(ROOT, "install", "compose.release.yml"), os.path.join(self.image_files, "compose.yml"))
+        shutil.copy(os.path.join(ROOT, "install", "docker-setup.sh"), self.image_files)
         self.bin = os.path.join(self.tmp, "bin")
         os.makedirs(self.bin)
         make_executable(os.path.join(self.bin, "docker"), FAKE_DOCKER)
-        make_executable(os.path.join(self.bin, "curl"), FAKE_CURL)
-        for name in ("sh", "id", "tar", "gzip", "mktemp", "rm", "dirname", "cp", "chmod", "sed", "tail", "cat", "mkdir"):
+        self.link_tools()
+        self.docker_log = os.path.join(self.tmp, "docker.log")
+        self.dir = os.path.join(self.tmp, "install-here")
+        self.script = GET
+
+    def link_tools(self):
+        for name in ("sh", "id", "mktemp", "rm", "dirname", "cp", "chmod", "sed", "tail", "cat", "mkdir"):
             found = next((c for c in ("/usr/bin/" + name, "/bin/" + name) if os.path.exists(c)), shutil.which(name))
             os.symlink(found, os.path.join(self.bin, name))
-        self.docker_log = os.path.join(self.tmp, "docker.log")
-        self.curl_log = os.path.join(self.tmp, "curl.log")
-        self.dir = os.path.join(self.tmp, "install-here")
 
     def run_script(self, args=(), env=None):
-        full = {"PATH": self.bin, "HOME": self.tmp, "HW_INSTALL_DIR": self.dir, "FAKE_ARCHIVE": self.archive,
-                "FAKE_DOCKER_LOG": self.docker_log, "FAKE_CURL_LOG": self.curl_log, "HW_METER_URL": "192.168.1.50"}
+        full = {"PATH": self.bin, "HOME": self.tmp, "HW_INSTALL_DIR": self.dir, "FAKE_IMAGE_FILES": self.image_files,
+                "FAKE_DOCKER_LOG": self.docker_log, "HW_METER_URL": "192.168.1.50"}
         full.update(env or {})
-        return subprocess.run([SH, GET, *args], capture_output=True, text=True, env=full, stdin=subprocess.DEVNULL, timeout=30)
+        return subprocess.run([SH, self.script, *args], capture_output=True, text=True, env=full,
+                              stdin=subprocess.DEVNULL, timeout=30)
 
     def read(self, path):
         with open(path) as f:
             return f.read()
 
-    def test_it_downloads_unpacks_and_starts_the_containers(self):
+    def calls(self):
+        return self.read(self.docker_log).splitlines()
+
+    def test_it_pulls_the_image_takes_the_files_from_it_and_starts_the_containers(self):
         result = self.run_script(["--yes", "--no-check"])
         self.assertEqual(result.returncode, 0, result.stderr)
+        calls = self.calls()
+        self.assertIn("pull ghcr.io/rnauser1986/homewizard-p1:latest", calls)
+        self.assertTrue(any(c.startswith("cp homewizard-p1-install-read:/app/install/compose.yml") for c in calls))
+        self.assertTrue(os.path.isfile(os.path.join(self.dir, "docker-compose.yml")))
         self.assertTrue(os.path.isfile(os.path.join(self.dir, "install", "docker-setup.sh")))
         self.assertIn("HW_METER_URL=http://192.168.1.50/api/v1/data", self.read(os.path.join(self.dir, ".env")))
-        self.assertIn("compose up -d --build", self.read(self.docker_log))
-        self.assertIn("https://github.com/rnauser1986/HomeWizard-P1-Monitor/archive/main.tar.gz", self.read(self.curl_log))
+        # A release install has no Dockerfile, so nothing is built.
+        self.assertIn("compose up -d", calls)
+        self.assertNotIn("compose up -d --build", calls)
+
+    def test_the_reader_container_is_removed_again(self):
+        self.run_script(["--yes", "--no-check"])
+        calls = self.calls()
+        self.assertIn("create --name homewizard-p1-install-read ghcr.io/rnauser1986/homewizard-p1:latest", calls)
+        created = calls.index("create --name homewizard-p1-install-read ghcr.io/rnauser1986/homewizard-p1:latest")
+        self.assertIn("rm -f homewizard-p1-install-read", calls[created + 1:])
+
+    def test_the_version_of_the_release_is_the_image_tag(self):
+        # The Release workflow fills in the RELEASE line with this command.
+        self.script = os.path.join(self.tmp, "install.sh")
+        with open(GET) as src, open(self.script, "w") as out:
+            out.write(re.sub(r'(?m)^RELEASE=""$', 'RELEASE="v2026.11.24"', src.read()))
+        result = self.run_script(["--yes", "--no-check"])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("pull ghcr.io/rnauser1986/homewizard-p1:2026.11.24", self.calls())
+
+    def test_hw_version_chooses_the_image_version(self):
+        self.run_script(["--yes", "--no-check"], env={"HW_VERSION": "2026.1.2"})
+        self.assertIn("pull ghcr.io/rnauser1986/homewizard-p1:2026.1.2", self.calls())
+
+    def test_the_release_line_can_be_filled_in(self):
+        text = self.read(GET)
+        self.assertEqual(len(re.findall(r'(?m)^RELEASE=""$', text)), 1)
 
     def test_a_second_run_keeps_the_env_file(self):
         self.run_script(["--yes", "--no-check"])
@@ -85,35 +114,42 @@ class GetScriptTests(unittest.TestCase):
 
     def test_with_no_keyboard_and_no_yes_it_stops_with_a_clear_message(self):
         result = self.run_script(["--no-check"])
-        if "Downloading" in result.stdout and result.returncode == 0:
+        if result.returncode == 0:
             self.skipTest("this machine has a terminal")
-        self.assertNotEqual(result.returncode, 0)
         self.assertIn("--yes", result.stderr)
 
-    def test_a_token_uses_the_api_url_and_the_header(self):
-        self.run_script(["--yes", "--no-check"], env={"GITHUB_TOKEN": "token-value"})
-        log = self.read(self.curl_log)
-        self.assertIn("https://api.github.com/repos/rnauser1986/HomeWizard-P1-Monitor/tarball/main", log)
-        self.assertIn("Authorization: Bearer", log)
-
     def test_a_failed_download_says_so_and_writes_nothing(self):
-        result = self.run_script(["--yes", "--no-check"], env={"FAKE_CURL_FAIL": "1"})
+        result = self.run_script(["--yes", "--no-check"], env={"FAKE_PULL_FAIL": "1"})
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("download failed", result.stderr)
+        self.assertIn("could not be downloaded", result.stderr)
         self.assertFalse(os.path.exists(os.path.join(self.dir, ".env")))
 
-    def test_missing_docker_stops_before_the_download_when_it_may_not_install_it(self):
+    def test_missing_docker_stops_when_it_may_not_install_it(self):
         os.remove(os.path.join(self.bin, "docker"))
         result = self.run_script(["--yes", "--no-docker-install"])
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Docker is not installed", result.stderr)
-        self.assertFalse(os.path.exists(self.curl_log))
+
+    def test_docker_that_does_not_answer_stops_with_a_clear_message(self):
+        result = self.run_script(["--yes", "--no-docker-install"], env={"FAKE_DOCKER_DOWN": "1"})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Docker does not answer", result.stderr)
+
+    def test_an_unknown_option_is_refused(self):
+        result = self.run_script(["--nope"])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Unknown option", result.stderr)
+
+    def test_the_options_of_get_are_not_passed_on_to_the_setup_script(self):
+        # --no-docker-install would be an unknown option for docker-setup.sh.
+        result = self.run_script(["--yes", "--no-check", "--no-docker-install"])
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_uninstall_removes_the_containers_and_keeps_the_files_and_the_data(self):
         self.run_script(["--yes", "--no-check"])
         result = self.run_script(["--uninstall"])
         self.assertEqual(result.returncode, 0, result.stderr)
-        calls = self.read(self.docker_log).splitlines()
+        calls = self.calls()
         self.assertIn("compose down", calls)
         self.assertNotIn("compose down -v", calls)
         self.assertTrue(os.path.isdir(self.dir))
@@ -122,7 +158,7 @@ class GetScriptTests(unittest.TestCase):
         self.run_script(["--yes", "--no-check"])
         result = self.run_script(["--uninstall", "--delete-data"])
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("compose down -v", self.read(self.docker_log).splitlines())
+        self.assertIn("compose down -v", self.calls())
         self.assertFalse(os.path.exists(self.dir))
 
     def test_uninstall_without_an_install_says_so_and_deletes_nothing(self):
@@ -132,11 +168,13 @@ class GetScriptTests(unittest.TestCase):
         self.assertIn("No install found", result.stderr)
         self.assertTrue(os.path.isdir(self.dir))
 
-    def test_docker_that_does_not_answer_stops_with_a_clear_message(self):
-        make_executable(os.path.join(self.bin, "docker"), "#!/bin/sh\nexit 1\n")
-        result = self.run_script(["--yes", "--no-docker-install"])
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("Docker does not answer", result.stderr)
+    def test_a_download_cut_off_halfway_runs_nothing(self):
+        # Every command is inside a function, and the only call is the last line.
+        lines = [line for line in self.read(GET).splitlines() if line.strip()]
+        self.assertEqual(lines[-1], 'main "$@"')
+        top_level = [line for line in lines if not line.startswith((" ", "#", "}", "\t"))]
+        for line in top_level:
+            self.assertRegex(line, r'^(set -eu|RELEASE=|IMAGE_REPO=|READER=|fail\(\)|main\(\)|uninstall_here\(\)|main "\$@")', line)
 
 
 if __name__ == "__main__":

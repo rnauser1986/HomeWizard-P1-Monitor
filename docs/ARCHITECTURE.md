@@ -470,19 +470,36 @@ The repository has a `Dockerfile` and a `docker-compose.yml`. They run the same 
 | `data` volume | Mounted at `/data` in both services. It holds `homewizard.db`. It stays when the containers are removed. |
 | Hardening | The root file system is read-only (`read_only`, with a `tmpfs` for `/tmp`). All Linux capabilities are dropped (`cap_drop: ALL`). `no-new-privileges` is on. The log of each container is limited to 3 files of 10 MB. |
 
-**One line with no download by hand**
+**One line with no download of the repository**
 
-`install/get.sh` installs Docker with Docker's own script (`get.docker.com`) when it is missing, using `sudo` unless you are
-root. `--no-docker-install` stops instead. It downloads the repository as an archive (`curl` and `tar`, no `git`) into
-`HW_INSTALL_DIR` (default `~/homewizard-p1`), then runs `install/docker-setup.sh`. When the user may not talk to the Docker
-daemon, it runs Docker with `sudo` (`HW_DOCKER`). The questions are read from the keyboard (`/dev/tty`) also when the script comes
-through a pipe. Without a keyboard it stops, unless you pass `--yes`:
-`curl -fsSL <url> | HW_METER_URL=192.168.1.50 sh -s -- --yes`. `HW_REPO` and `HW_REF` choose another repository, branch or tag (use
-a tag to pin a version). A second run replaces the program files and keeps `.env`; the database stays in the Docker volume.
-`--uninstall` runs `docker compose down` and keeps the files and the volume. `--uninstall --delete-data` also deletes the volume and
-the folder. `GITHUB_TOKEN` is for a private repository: the script then downloads the archive from the API. The raw URL of a
-private repository needs the token as well, so the one line works without a token only when the repository is public.
-`tests/test_get_script.py` tests it with a fake `curl` and a fake `docker`. The installation of Docker itself is not tested.
+`install/get.sh` is attached to each GitHub release as `install.sh`, so `curl -fsSL https://github.com/rnauser1986/HomeWizard-P1-Monitor/releases/latest/download/install.sh | sh`
+installs the program. The script installs Docker with Docker's own script (`get.docker.com`) when it is missing, using `sudo`
+unless you are root (`--no-docker-install` stops instead). It pulls the image `ghcr.io/rnauser1986/homewizard-p1`, makes a
+container from it that never starts, and copies two files out of it: `/app/install/compose.yml` (the file
+`install/compose.release.yml`) and `/app/install/docker-setup.sh`. They go to `HW_INSTALL_DIR` (default `~/homewizard-p1`), so they
+always match the program. Then it runs the setup script. When the user may not talk to the Docker daemon, Docker runs with `sudo`
+(`HW_DOCKER`). The questions are read from the keyboard (`/dev/tty`) also when the script comes through a pipe. Without a keyboard
+it stops, unless you pass `--yes`: `curl -fsSL <url> | HW_METER_URL=192.168.1.50 sh -s -- --yes`.
+
+The version of the image is the release of the script (the line `RELEASE=""` is filled in by the workflow). `HW_VERSION` runs
+another one, for example `HW_VERSION=2026.11.24`. A second run pulls the image again and replaces the two files, keeps `.env`, and
+`docker compose up -d` recreates the containers when the image is new. The database stays in the Docker volume. `--uninstall` runs
+`docker compose down` and keeps the files and the volume. `--uninstall --delete-data` also deletes the volume and the folder.
+`tests/test_get_script.py` tests the script with a fake `docker`. The installation of Docker itself is not tested.
+
+`install/compose.release.yml` is `docker-compose.yml` with the `build:` and `image:` lines replaced by the published image.
+`tests/test_docker.py` fails when the two files differ in anything else. The image does not hold the other files of `install/`.
+
+**Release**
+
+The workflow `.github/workflows/release.yml` is started by hand (Actions, Release, Run workflow) on `main`. It runs the tests, the
+linter and the end-to-end check, builds the image for `linux/amd64` and `linux/arm64` (a Raspberry Pi) with the tags `YYYY.M.D` (and
+`.N` for a second release on the same day, `scripts/release-version.sh`) and `latest`, tags the commit `vYYYY.M.D` and makes a
+GitHub release with `install.sh` attached. A red test stops the release before anything is published. The image is not signed.
+
+Two things need the owner once. The first publish makes the package private, so open the package page on GitHub (the repository,
+Packages) and set the visibility to public, or the one line cannot pull it without `docker login ghcr.io`. A private repository
+has no public release files either, so the line works for other people only when the repository is public.
 
 **Start with the setup script**
 

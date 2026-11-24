@@ -65,6 +65,14 @@ class DockerSetupScriptTests(unittest.TestCase):
         self.assertEqual(values["TZ"], "Europe/Stockholm")
         self.assertEqual(values["HW_PRICE_AREA"], "SE3")
         self.assertEqual(values["HW_SIGNAL_URL"], "")
+        # No Dockerfile next to the compose file: a release install, nothing to build.
+        self.assertIn("compose up -d ", self.docker_calls()[-1] + " ")
+        self.assertNotIn("--build", self.docker_calls()[-1])
+
+    def test_a_checkout_with_a_dockerfile_builds_the_image(self):
+        with open(os.path.join(self.repo, "Dockerfile"), "w") as f:
+            f.write("FROM scratch\n")
+        self.run_script(stdin="192.168.1.50\n\n\n\nn\n")
         self.assertIn("compose up -d --build", self.docker_calls())
 
     def test_the_env_file_is_private(self):
@@ -105,7 +113,7 @@ class DockerSetupScriptTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.env_file()["HW_METER_URL"], "http://keep.example/api/v1/data")
         self.assertFalse(os.path.exists(os.path.join(self.repo, ".env.bak")))
-        self.assertIn("compose up -d --build", self.docker_calls())
+        self.assertIn("compose up -d", self.docker_calls()[-1])
 
     def test_a_replaced_env_is_saved_as_a_backup(self):
         with open(os.path.join(self.repo, ".env"), "w") as f:

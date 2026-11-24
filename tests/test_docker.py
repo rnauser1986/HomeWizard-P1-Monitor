@@ -80,3 +80,41 @@ class DockerFilesTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReleaseFilesTests(unittest.TestCase):
+    def test_the_release_compose_file_is_the_compose_file_without_the_build(self):
+        # The release compose file runs the published image. Apart from that it must not differ, or a release install
+        # would behave differently from the repository.
+        def body(name):
+            lines = read(name).splitlines()
+            return [ln for ln in lines if not ln.lstrip().startswith("#") and not re.match(r"\s+(build|image):", ln)]
+        self.assertEqual(body("docker-compose.yml"), body(os.path.join("install", "compose.release.yml")))
+
+    def test_the_release_compose_file_names_the_published_image(self):
+        self.assertIn("image: ghcr.io/rnauser1986/homewizard-p1:${HW_VERSION:-latest}", read("install", "compose.release.yml"))
+        self.assertNotIn("build:", read("install", "compose.release.yml"))
+
+    def test_the_image_carries_the_files_that_get_sh_takes_from_it(self):
+        dockerfile = read("Dockerfile")
+        self.assertIn("install/docker-setup.sh /app/install/docker-setup.sh", dockerfile)
+        self.assertIn("install/compose.release.yml /app/install/compose.yml", dockerfile)
+        ignore = read(".dockerignore")
+        self.assertIn("!install/docker-setup.sh", ignore)
+        self.assertIn("!install/compose.release.yml", ignore)
+
+    def test_the_release_workflow_tests_first_and_publishes_an_image_for_the_raspberry_pi(self):
+        workflow = read(".github", "workflows", "release.yml")
+        self.assertIn("workflow_dispatch", workflow)
+        self.assertIn("needs: [version, test]", workflow)
+        self.assertIn("linux/amd64,linux/arm64", workflow)
+        self.assertIn("refs/heads/main", workflow)
+        self.assertIn("unittest discover", workflow)
+        self.assertIn("tests/e2e/run.sh", workflow)
+
+    def test_the_release_workflow_attaches_get_sh_as_install_sh(self):
+        workflow = read(".github", "workflows", "release.yml")
+        self.assertIn("install/get.sh > release/install.sh", workflow)
+        self.assertIn("gh release upload", workflow)
+        self.assertIn("releases/latest/download/install.sh", read("README.md"))
+

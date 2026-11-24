@@ -12,4 +12,6 @@ __pycache__/
 .claude/
 docs/
 tests/
-install/
+install/*
+!install/docker-setup.sh
+!install/compose.release.yml

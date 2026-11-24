@@ -1,0 +1,56 @@
+# The compose file of a release install. It runs the published image and builds nothing (install/get.sh puts it in place).
+# Only HW_METER_URL is required. Put it in a file named .env next to this file (see .env.example).
+# Every other setting in .env.example works the same way. Never put .env in the repository.
+
+x-common: &common
+  image: ghcr.io/rnauser1986/homewizard-p1:${HW_VERSION:-latest}
+  restart: unless-stopped
+  # Hardening. The programs write only to the data volume, need no Linux capability and open one port above 1024.
+  read_only: true
+  tmpfs:
+    - /tmp
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  # Without a limit, Docker keeps the whole log of a container until the disk is full.
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+  env_file:
+    - path: .env
+      required: false
+  environment: &env
+    HW_METER_URL: ${HW_METER_URL:?Set HW_METER_URL in .env, for example HW_METER_URL=http://192.168.1.50/api/v1/data}
+    HW_DB_PATH: /data/homewizard.db
+    HW_API_HOST: 0.0.0.0
+    HW_API_PORT: "8085"
+    TZ: ${TZ:-Europe/Stockholm}
+  volumes:
+    - data:/data
+
+services:
+  collector:
+    <<: *common
+    command: ["python", "collector.py"]
+
+  api:
+    <<: *common
+    command: ["python", "api_server.py"]
+    depends_on:
+      - collector
+    # The program has no sign-in. Use it on the home network only. Never open this port to the internet.
+    ports:
+      - "${HW_WEB_PORT:-8085}:8085"
+    healthcheck:
+      # /health answers 503 when the newest measurement is older than HW_HEALTH_MAX_AGE_SEC.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8085/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  data:
