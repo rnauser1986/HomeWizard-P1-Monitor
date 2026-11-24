@@ -103,3 +103,33 @@ def get_power_quality(db_path, hours):
     }
     _CACHE[cache_key] = (time.monotonic(), payload)
     return payload
+
+
+def get_power_quality_summary(db_path, hours):
+    """Only the lowest and highest voltage and the highest current of each phase. The statistics page needs no more.
+
+    It reads the same window as get_power_quality and rounds the same way, so the numbers are the same.
+    It skips the series, the events, the counts and the spread between phases, which cost most of the time.
+    """
+    hrs = max(1, min(int(hours or 24), 720))
+    cache_key = (db_path, hrs, "summary")
+    now_mono = time.monotonic()
+    cached = _CACHE.get(cache_key)
+    if cached and (now_mono - cached[0]) < CACHE_TTL_SEC:
+        return cached[1]
+
+    c = sqlite3.connect(db_path, timeout=5.0)
+    try:
+        c.execute("PRAGMA busy_timeout=5000;")
+        c.row_factory = sqlite3.Row
+        summary = dict(c.execute("""
+            SELECT ROUND(MIN(active_voltage_l1_v), 1) AS min_v1, ROUND(MAX(active_voltage_l1_v), 1) AS max_v1, ROUND(MAX(active_current_l1_a), 1) AS max_a1,
+                   ROUND(MIN(active_voltage_l2_v), 1) AS min_v2, ROUND(MAX(active_voltage_l2_v), 1) AS max_v2, ROUND(MAX(active_current_l2_a), 1) AS max_a2,
+                   ROUND(MIN(active_voltage_l3_v), 1) AS min_v3, ROUND(MAX(active_voltage_l3_v), 1) AS max_v3, ROUND(MAX(active_current_l3_a), 1) AS max_a3
+            FROM measurements WHERE ts_utc >= strftime('%Y-%m-%dT%H:%M:%S', 'now', ?)
+        """, (f"-{hrs} hours",)).fetchone())
+    finally:
+        c.close()
+    payload = {"hours": hrs, "summary": summary}
+    _CACHE[cache_key] = (time.monotonic(), payload)
+    return payload

@@ -289,7 +289,7 @@ st();hi();setInterval(()=>{st();hi();},10000);window.addEventListener('resize',(
 <script>
 (async function(){
   try{
-    const r = await fetch('/api/power-quality?hours=24');
+    const r = await fetch('/api/power-quality?hours=24&part=summary');
     const d = await r.json();
     const s = d.summary || {};
     const mins = [s.min_v1,s.min_v2,s.min_v3].filter(x => x != null && !isNaN(x));

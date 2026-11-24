@@ -187,6 +187,7 @@ its memory stays small. It catches every exception and prints `[SIGNAL_ERR] ...`
 | `/history?period=<now\|day\|week\|month\|year>&offset=<0\|-1\|...>` | JSON: the chart points, the phase voltage and current, and the standby load |
 | `/power-quality` | The power quality page (`PQ_HTML`) |
 | `/api/power-quality?hours=<1..HW_PQ_MAX_HOURS>` | JSON from `pq_data.py` |
+| `/api/power-quality?hours=<1..HW_PQ_MAX_HOURS>&part=summary` | Only the summary (lowest and highest voltage, highest current of each phase), for the statistics page. It skips the series and the events and is much cheaper. |
 | `/health` | JSON with `ok`, `status`, `latest_utc`, `age_sec`, `max_age_sec` |
 | any other path | 404 with an empty body |
 

@@ -70,6 +70,77 @@ class PowerQualityTests(unittest.TestCase):
         self.assertIs(self.mod.get_power_quality(path, 24), first)
 
 
+class SummaryOnlyTests(unittest.TestCase):
+    """The light answer for the statistics page: the same numbers as the whole answer, with less work."""
+
+    def setUp(self):
+        self.mod = fresh("pq_data")
+        self.mod._CACHE.clear()
+
+    def rows(self):
+        now = utc_now()
+        return [{"ts": now - timedelta(minutes=5), "w": 4000.0, **NORMAL, "v1": 228.4, "a3": 12.3},
+                {"ts": now - timedelta(minutes=1), "w": 9000.0, **NORMAL, "v2": 238.6, "a3": 27.8},
+                {"ts": now - timedelta(hours=30), "w": 20000.0, **NORMAL, "v1": 150.0, "a1": 30.0}]
+
+    def test_the_summary_has_the_same_numbers_as_the_whole_answer(self):
+        path = make_db(self.rows())
+        light = self.mod.get_power_quality_summary(path, 24)["summary"]
+        whole = self.mod.get_power_quality(path, 24)["summary"]
+        for key in ("min_v1", "max_v1", "max_a1", "min_v2", "max_v2", "max_a2", "min_v3", "max_v3", "max_a3"):
+            self.assertEqual(light[key], whole[key], key)
+        self.assertEqual((light["min_v1"], light["max_v2"], light["max_a3"]), (228.4, 238.6, 27.8))
+
+    def test_it_ignores_rows_older_than_the_window(self):
+        path = make_db(self.rows())
+        self.assertGreater(self.mod.get_power_quality_summary(path, 24)["summary"]["min_v1"], 200)
+
+    def test_it_holds_no_series_and_no_events(self):
+        answer = self.mod.get_power_quality_summary(make_db(self.rows()), 24)
+        self.assertEqual(set(answer), {"hours", "summary"})
+        self.assertEqual(len(answer["summary"]), 9)
+
+    def test_an_empty_database_gives_empty_numbers(self):
+        summary = self.mod.get_power_quality_summary(make_db(), 24)["summary"]
+        self.assertTrue(all(value is None for value in summary.values()))
+
+    def test_hours_are_limited_and_the_answer_is_cached_apart_from_the_whole_one(self):
+        path = make_db(self.rows())
+        self.assertEqual(self.mod.get_power_quality_summary(path, 100000)["hours"], 720)
+        first = self.mod.get_power_quality_summary(path, 24)
+        self.assertIs(self.mod.get_power_quality_summary(path, 24), first)
+        self.assertNotIn("series", first)
+        self.assertIn("series", self.mod.get_power_quality(path, 24))
+
+    def test_it_closes_the_database_also_when_the_query_fails(self):
+        opened = []
+
+        class Tracked(sqlite3.Connection):
+            closed = False
+
+            def close(self):
+                self.closed = True
+                super().close()
+
+            def execute(self, sql, *args):
+                if "SELECT ROUND" in sql:
+                    raise sqlite3.OperationalError("the query failed")
+                return super().execute(sql, *args)
+
+        real_connect = sqlite3.connect
+
+        def connect(path, timeout=5.0):
+            c = real_connect(path, timeout=timeout, factory=Tracked)
+            opened.append(c)
+            return c
+
+        path = make_db(self.rows())
+        with mock.patch.object(self.mod.sqlite3, "connect", connect):
+            with self.assertRaises(sqlite3.OperationalError):
+                self.mod.get_power_quality_summary(path, 24)
+        self.assertTrue(opened and all(c.closed for c in opened))
+
+
 class ConnectionClosingTests(unittest.TestCase):
     """get_power_quality closes the database also when a query fails."""
 

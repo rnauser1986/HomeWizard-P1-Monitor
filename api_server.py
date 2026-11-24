@@ -17,7 +17,7 @@ from config import (
     POLL_INTERVAL_SEC,
     UI_PATH as UI,
 )
-from pq_data import get_power_quality
+from pq_data import get_power_quality, get_power_quality_summary
 from pq_page import PQ_HTML
 
 
@@ -414,7 +414,12 @@ class H(BaseHTTPRequestHandler):
             self.send_bytes(200, "text/html; charset=utf-8", PQ_HTML.encode())
         elif path == "/api/power-quality":
             hrs = int_arg(qs, "hours", 24, 1, PQ_MAX_HOURS)
-            self.send_bytes(200, "application/json", json.dumps(get_power_quality(DB, hrs)).encode())
+            # part=summary: only the summary, for the statistics page. Any other value gives the whole answer.
+            if (qs.get("part") or [""])[0] == "summary":
+                answer = get_power_quality_summary(DB, hrs)
+            else:
+                answer = get_power_quality(DB, hrs)
+            self.send_bytes(200, "application/json", json.dumps(answer).encode())
         elif path == "/health":
             try:
                 c = conn()

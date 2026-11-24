@@ -380,6 +380,26 @@ class StandbyFromSqlTests(unittest.TestCase):
         self.assertIn("idx_measurements_ts", names)
 
 
+class PowerQualitySummaryRouteTests(ServerTestCase):
+    def test_part_summary_gives_only_the_summary(self):
+        status, body = self.get("/api/power-quality?hours=24&part=summary")
+        self.assertEqual(status, 200)
+        answer = json.loads(body)
+        self.assertEqual(set(answer), {"hours", "summary"})
+
+    def test_without_part_it_gives_the_whole_answer(self):
+        answer = json.loads(self.get("/api/power-quality?hours=24")[1])
+        self.assertTrue({"summary", "series", "events", "aggregates"} <= set(answer))
+
+    def test_another_value_of_part_gives_the_whole_answer(self):
+        answer = json.loads(self.get("/api/power-quality?hours=24&part=whatever")[1])
+        self.assertIn("series", answer)
+
+    def test_the_statistics_page_asks_for_the_summary_only(self):
+        with open(os.path.join(os.path.dirname(self.api.__file__), "ui.html"), encoding="utf-8") as f:
+            self.assertIn("/api/power-quality?hours=24&part=summary", f.read())
+
+
 class HardeningTests(ServerTestCase):
     def logged(self, mock_print):
         return " ".join(str(c.args[0]) for c in mock_print.call_args_list if c.args)
