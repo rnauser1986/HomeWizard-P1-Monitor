@@ -60,7 +60,7 @@ fast local storage. WAL does not work well on a network mount.
 
 | Table | Columns | Purpose |
 | --- | --- | --- |
-| `measurements` | `id`, `ts_utc`, `wifi_strength`, `active_power_w`, `active_power_l1_w` to `l3_w`, `active_voltage_l1_v` to `l3_v`, `active_current_a`, `active_current_l1_a` to `l3_a`, `total_power_import_kwh`, `total_power_export_kwh`, `raw_json` | One row for each poll. Index `idx_measurements_ts` on `ts_utc`. |
+| `measurements` | `id`, `ts_utc`, `wifi_strength`, `active_power_w`, `active_power_l1_w` to `l3_w`, `active_voltage_l1_v` to `l3_v`, `active_current_a`, `active_current_l1_a` to `l3_a`, `total_power_import_kwh`, `total_power_export_kwh`, `raw_json` | One row for each poll. Index `idx_measurements_ts` on `ts_utc` and `idx_measurements_power` on `active_power_w`. |
 | `historical_kwh` | `period_type` (`day`, `week`, `month`, `year`), `period_key`, `kwh` | Energy from before the live polling started. The web server adds it to the live totals. |
 | `tariff_config` | `id` (always 1), `start_date`, `mode` (`fixed`, `dynamic`), `interval_min` (15, 60), `area`, `fixed_sek`, `add_sek`, `vat_pct` | The price settings. An empty table means the defaults from `.env`. |
 | `spot_prices` | `slot_key` (`YYYY-MM-DD HH:MM`), `sek_per_kwh` | A cache of the spot prices from `elprisetjustnu.se`. |
@@ -72,7 +72,30 @@ fast local storage. WAL does not work well on a network mount.
 - `ts_utc` is a UTC time in ISO 8601 text, for example `2026-11-24T06:11:14.123456+00:00`. The pages show local time. SQLite
   converts with `'localtime'`, so the host must have the right time zone.
 - A row imported from CSV has `"source":"csv_import"` in `raw_json`. The kWh totals skip these rows. Their energy comes from
-  `historical_kwh`.
+  `historical_kwh`. An imported row must have `ts_utc` in the same text format as a polled row (`YYYY-MM-DDTHH:MM:SS...`), because
+  the queries compare `ts_utc` as text.
+
+**Queries and performance**
+
+- **A period is a range on `ts_utc`.** `api_server.py` finds the UTC bounds of a local day, week, month or year with `day_bounds()`
+  and filters with `RANGE` (`ts_utc >= ? AND ts_utc < ?`). SQLite then uses `idx_measurements_ts`. A filter such as
+  `date(ts_utc,'localtime')=...` cannot use the index and reads the whole table. Tests check that both give the same rows, also on
+  the days that summer time changes.
+- **The standby power** is the 15th percentile of the positive power values. SQLite finds it with `COUNT(*)` and `OFFSET`, with
+  `idx_measurements_power`. No list of values is built in Python.
+- **Measured** on a made-up database with 1.05 million rows (about four months of polls at 10 s), warm cache, one core of a cloud
+  server. A small home server is slower. Before the change and after it:
+
+| View | Before | After |
+| --- | --- | --- |
+| `stats()` | 3.2 s | 0.7 s |
+| `history` now / day / week | 1.1 s / 1.9 s / 2.3 s | 0.03 s / 0.03 s / 0.05 s |
+| `history` month / year | 4.9 s / 3.6 s | 3.7 s / 2.4 s |
+
+- **The month and year views still read every row of the year.** They sum, average and group a whole year, so their time grows with
+  the number of rows. See Known gaps.
+- **The database grows.** Each row holds the full `raw_json` (about 750 bytes in the test), so four months were 1.1 GB, about 3 GB
+  for a year. The program deletes nothing. See Known gaps.
 - **Energy for a period** is `MAX(total_power_import_kwh) - MIN(total_power_import_kwh)` over the live rows of the period, plus
   the matching `historical_kwh` values. The program does not count exported energy.
 - **Standby load** is the 15th percentile of the positive power values of the period. The standby kWh is that power times the
@@ -168,7 +191,8 @@ its memory stays small. It catches every exception and prints `[SIGNAL_ERR] ...`
 | any other path | 404 with an empty body |
 
 `/health` answers 200 when the newest measurement is not older than `HW_HEALTH_MAX_AGE_SEC` (120 s). It answers 503 with
-`stale_data`, `no_data` or `db_error`. Use it with Uptime Kuma or a similar monitor.
+`stale_data`, `no_data` or `db_error`. For `db_error` the body holds no details. They go to the log as `[HEALTH_ERR]`. Use it with
+Uptime Kuma or a similar monitor.
 
 **Rules**
 
@@ -179,6 +203,12 @@ its memory stays small. It catches every exception and prints `[SIGNAL_ERR] ...`
 - An unexpected error in a route gives HTTP 500 with the body `{"error":"internal error"}` and the log line `[HTTP_ERR] <path>: ...`.
   The body never holds details.
 - Use `?` placeholders for every value from a request.
+- A client has 15 seconds (`H.timeout`) to send its request. A slower client is dropped.
+- Every answer has `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer`.
+- The server logs the answers with status 400 or higher as `[HTTP] <method> <path> -> <status>`, without the query. It logs a
+  successful answer never. At the start, each program logs one `[START]` line with its settings. The line holds no address and no
+  number.
+- `SIGTERM` (the signal of systemd and Docker) stops the server with exit code 0, and it closes its socket.
 
 ## Power quality
 
@@ -337,7 +367,15 @@ What is different from the older install:
   week. Set `HW_PQ_MAX_HOURS=168` to keep the old limit.
 - The standby kWh of the now and day views counts one minute for each point. The older code used the poll interval for these
   points, which are minute averages.
-- The collector writes `[POLL_ERR]` instead of `Fel vid pollning`, and prints `[CONFIG]` lines at the start.
+- The collector writes `[POLL_ERR]` instead of `Fel vid pollning`, and prints a `[START]` line and `[CONFIG]` lines at the start.
+- The systemd units are hardened (`NoNewPrivileges`, `ProtectSystem=strict`, `PrivateTmp`, `ProtectHome` and more). The services can
+  write only in `/opt/homewizard`. If `.env` puts the database somewhere else with `HW_DB_PATH`, add that folder to
+  `ReadWritePaths=` in both units, or the service cannot write. `systemctl status` and the journal show the error.
+- The database gets a second index, `idx_measurements_power`. The collector creates it at the start. On a large database this takes
+  a few seconds, and the first start is slower.
+- The statistics and history queries read only the rows of the period. The numbers are the same as before. A test compares both
+  ways of selecting rows, also on the days that summer time changes.
+- `/health` no longer shows the text of a database error. It is in the log as `[HEALTH_ERR]`.
 - The same Signal text is forgotten after `HW_SIGNAL_COOLDOWN` seconds, so the memory of `notify_signal.py` does not grow.
 
 **Backup.** `homewizard-db-backup.timer` runs every day at 05:30 (`Persistent=true`, so a missed run starts after a reboot).
@@ -373,6 +411,7 @@ The repository has a `Dockerfile` and a `docker-compose.yml`. They run the same 
 | `collector` service | Runs `collector.py`. |
 | `api` service | Runs `api_server.py` and publishes the web port. It has a health check on `/health`. |
 | `data` volume | Mounted at `/data` in both services. It holds `homewizard.db`. It stays when the containers are removed. |
+| Hardening | The root file system is read-only (`read_only`, with a `tmpfs` for `/tmp`). All Linux capabilities are dropped (`cap_drop: ALL`). `no-new-privileges` is on. The log of each container is limited to 3 files of 10 MB. |
 
 **Start**
 
@@ -407,9 +446,10 @@ An update restarts the services, so the alarm counters start from zero.
 
 **The check of the Docker package**
 
-`sh tests/e2e/run.sh` starts both services with a fake meter (`tests/e2e/fake_meter.py`) and checks six things: `/health` becomes
+`sh tests/e2e/run.sh` starts both services with a fake meter (`tests/e2e/fake_meter.py`) and checks eight things: `/health` becomes
 ok, `/stats` shows the reading of the fake meter, the pages answer, the program does not run as root, the database is in the
-volume, and the collector stops on `SIGTERM` with exit code 0 and without being killed. The GitHub workflow runs it on every push.
+volume, the root file system is read-only while the volume is writable, and both the api and the collector stop on `SIGTERM` with
+exit code 0 and without being killed. The GitHub workflow runs it on every push.
 You can run it on your own computer. It needs Docker, `curl` and `python3`, and it never touches a real meter or your database:
 it uses its own project name (`hw-e2e`), port (18085) and volume, and removes them at the end.
 
@@ -438,6 +478,12 @@ request. Where a test can show the gap, it is an `expectedFailure` test until th
 6. **A page request can wait for the price service.** In `dynamic` mode, `effective_rate` calls `elprisetjustnu.se` (two calls with a
    timeout of 6 s) when a spot price is missing, at most once in `HW_TARIFF_SYNC_COOLDOWN` seconds. A failed call leaves no log line.
 7. **The server has no sign-in** and listens on all interfaces by default. See Architecture.
-8. **Two helpers put SQL text from the caller into a query.** `m_kwh` and `calc_standby_from_w` in `api_server.py` take the
-   `WHERE` text as an argument. The callers pass fixed text from the code, and every date goes in as a `?` parameter. A caller must
-   never pass text from a request. Tests check that `m_kwh` takes parameters.
+8. **Some SQL text is put together from fixed pieces.** `m_kwh` and `calc_standby_from_w` in `api_server.py` take the `WHERE` text
+   as an argument, and `pq_data.py` puts the fixed text `DV_EXPR` and the bucket expression into its queries. The callers pass fixed
+   text from the code, and every value goes in as a `?` parameter. A caller must never pass text from a request.
+9. **The month and year views read the whole year.** They sum, average and group a year of rows, so with one row for each 10 seconds
+   they take seconds (see Data model). A table of totals for each hour or day, updated by the collector, would make them fast. It
+   is a change of the schema and of the collector, so it needs a decision.
+10. **The database only grows.** Nothing deletes or shrinks old rows, and each row keeps the whole `raw_json`. A rule that keeps
+    the full rows for some months and then only the columns the pages use, or an archive, would stop the growth. It breaks the
+    rule that the program never changes a measurement, so it needs a decision.

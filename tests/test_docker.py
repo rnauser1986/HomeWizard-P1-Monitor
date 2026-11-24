@@ -7,8 +7,8 @@ import unittest
 from tests.helpers import ROOT
 
 
-def read(name):
-    with open(os.path.join(ROOT, name), encoding="utf-8") as f:
+def read(*parts):
+    with open(os.path.join(ROOT, *parts), encoding="utf-8") as f:
         return f.read()
 
 
@@ -58,6 +58,24 @@ class DockerFilesTests(unittest.TestCase):
 
     def test_the_compose_file_does_not_use_a_floating_image_of_someone_else(self):
         self.assertRegex(read("Dockerfile"), r"(?m)^FROM python:3\.\d+-slim\s*$")
+
+    def test_the_containers_are_hardened(self):
+        compose = read("docker-compose.yml")
+        for text in ("read_only: true", "cap_drop:", "- ALL", "no-new-privileges:true", "max-size:", "max-file:"):
+            self.assertIn(text, compose)
+        self.assertIn("PYTHONDONTWRITEBYTECODE=1", read("Dockerfile"))
+
+    def test_the_systemd_units_are_hardened(self):
+        for name in ("homewizard-collector.service", "homewizard-api.service"):
+            text = read("install", name)
+            for key in ("NoNewPrivileges=yes", "ProtectSystem=strict", "ReadWritePaths=/opt/homewizard", "PrivateTmp=yes", "ProtectHome=yes"):
+                self.assertIn(key, text, f"{name}: {key}")
+
+    def test_the_end_to_end_check_tests_the_hardening_and_both_stops(self):
+        script = read("tests", "e2e", "run.sh")
+        self.assertIn("touch /app/should-not-exist", script)
+        self.assertIn("stop -t 10 api", script)
+        self.assertIn("stop -t 10 collector", script)
 
 
 if __name__ == "__main__":

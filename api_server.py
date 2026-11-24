@@ -1,5 +1,7 @@
 import json
+import signal
 import sqlite3
+import sys
 from datetime import date
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
@@ -41,6 +43,23 @@ def cur_keys(cur):
         "strftime('%Y-%m','now','localtime') m, strftime('%Y','now','localtime') y"
     ).fetchone()
     return row["d"], row["w"], row["m"], row["y"]
+
+
+# The window of a local period as a range on ts_utc. SQLite cannot use the index on ts_utc for
+# date(ts_utc,'localtime')=..., so every query on a period reads the whole table. A range reads only the rows of the period.
+RANGE = "ts_utc >= ? AND ts_utc < ?"
+
+
+def day_bounds(cur, start_date, length):
+    """Return (lo, hi): the UTC text bounds [lo, hi) of a local period, in the format of ts_utc.
+
+    start_date is a local date 'YYYY-MM-DD'. length is a SQLite modifier: '+1 day', '+7 days', '+1 month' or '+1 year'.
+    """
+    row = cur.execute(
+        "SELECT strftime('%Y-%m-%dT%H:%M:%S', ?, 'utc') lo, strftime('%Y-%m-%dT%H:%M:%S', ?, ?, 'utc') hi",
+        (start_date, start_date, length),
+    ).fetchone()
+    return row["lo"], row["hi"]
 
 
 def m_kwh(cur, where_sql, params=()):
@@ -92,7 +111,7 @@ def _stats(c):
     rate = current_rate_sek(cur)
 
     day_kwh = round(
-        m_kwh(cur, "date(ts_utc,'localtime')=date('now','localtime')")
+        m_kwh(cur, RANGE, day_bounds(cur, d_key, "+1 day"))
         + h_kwh(cur, "day", d_key),
         3,
     )
@@ -103,18 +122,19 @@ def _stats(c):
         ).fetchone()["d"]
         for i in range(7)
     ]
+    wk_bounds = day_bounds(cur, wk_dates[0], "+7 days")
     live_wk_dates = {
         r["d"]
         for r in cur.execute(
-            "SELECT DISTINCT date(ts_utc,'localtime') d FROM measurements WHERE date(ts_utc,'localtime') BETWEEN ? AND ? AND (raw_json IS NULL OR raw_json NOT LIKE '%source%csv_import%')",
-            (wk_dates[0], wk_dates[-1]),
+            "SELECT DISTINCT date(ts_utc,'localtime') d FROM measurements WHERE " + RANGE + " AND (raw_json IS NULL OR raw_json NOT LIKE '%source%csv_import%')",
+            wk_bounds,
         ).fetchall()
     }
     w_day_sum = sum(
         v for k, v in h_map(cur, "day").items() if k in wk_dates and k not in live_wk_dates
     )
     week_kwh = round(
-        m_kwh(cur, "date(ts_utc,'localtime') BETWEEN date('now','localtime','weekday 0','-6 days') AND date('now','localtime','weekday 0')")
+        m_kwh(cur, RANGE, wk_bounds)
         + h_kwh(cur, "week", w_key)
         + w_day_sum,
         3,
@@ -127,13 +147,13 @@ def _stats(c):
     y_mon_sum = sum(v for k, v in month_hist.items() if k[:4] == y_key)
 
     month_kwh = round(
-        m_kwh(cur, "strftime('%Y-%m',ts_utc,'localtime')=strftime('%Y-%m','now','localtime')")
+        m_kwh(cur, RANGE, day_bounds(cur, m_key + "-01", "+1 month"))
         + month_hist.get(m_key, 0.0)
         + m_day_sum,
         3,
     )
     year_kwh = round(
-        m_kwh(cur, "strftime('%Y',ts_utc,'localtime')=strftime('%Y','now','localtime')")
+        m_kwh(cur, RANGE, day_bounds(cur, y_key + "-01-01", "+1 year"))
         + year_hist.get(y_key, 0.0)
         + y_mon_sum
         + y_day_sum,
@@ -195,9 +215,9 @@ def build_phases(cur, p, qs):
             "SELECT strftime('%H:%M',ts_utc,'localtime') AS label,"
             "ROUND(AVG(active_voltage_l1_v),1) AS v1,ROUND(AVG(active_voltage_l2_v),1) AS v2,ROUND(AVG(active_voltage_l3_v),1) AS v3,"
             "ROUND(AVG(active_current_l1_a),2) AS a1,ROUND(AVG(active_current_l2_a),2) AS a2,ROUND(AVG(active_current_l3_a),2) AS a3 "
-            "FROM measurements WHERE date(ts_utc,'localtime')=? "
+            "FROM measurements WHERE " + RANGE + " "
             "GROUP BY strftime('%Y-%m-%d %H:%M',ts_utc,'localtime') ORDER BY label ASC",
-            (d_sel,),
+            day_bounds(cur, d_sel, "+1 day"),
         ).fetchall()
         return [dict(r) for r in rows]
     if p == "week":
@@ -209,8 +229,8 @@ def build_phases(cur, p, qs):
             "SELECT date(ts_utc,'localtime') AS d,"
             "ROUND(AVG(active_voltage_l1_v),1) AS v1,ROUND(AVG(active_voltage_l2_v),1) AS v2,ROUND(AVG(active_voltage_l3_v),1) AS v3,"
             "ROUND(MAX(active_current_l1_a),2) AS a1,ROUND(MAX(active_current_l2_a),2) AS a2,ROUND(MAX(active_current_l3_a),2) AS a3 "
-            "FROM measurements WHERE date(ts_utc,'localtime') BETWEEN ? AND date(?,'+6 days') GROUP BY d",
-            (d0, d0),
+            "FROM measurements WHERE " + RANGE + " GROUP BY d",
+            day_bounds(cur, d0, "+7 days"),
         ).fetchall()
         rm = {r["d"]: dict(r) for r in qrows}
         out = []
@@ -225,8 +245,8 @@ def build_phases(cur, p, qs):
             "SELECT strftime('%Y-%m',ts_utc,'localtime') AS m,"
             "ROUND(AVG(active_voltage_l1_v),1) AS v1,ROUND(AVG(active_voltage_l2_v),1) AS v2,ROUND(AVG(active_voltage_l3_v),1) AS v3,"
             "ROUND(MAX(active_current_l1_a),2) AS a1,ROUND(MAX(active_current_l2_a),2) AS a2,ROUND(MAX(active_current_l3_a),2) AS a3 "
-            "FROM measurements WHERE strftime('%Y',ts_utc,'localtime')=? GROUP BY m",
-            (yr,),
+            "FROM measurements WHERE " + RANGE + " GROUP BY m",
+            day_bounds(cur, yr + "-01-01", "+1 year"),
         ).fetchall()
         rm = {r["m"]: dict(r) for r in qrows}
         out = []
@@ -258,17 +278,17 @@ def calc_standby(pts_list, rate):
 
 
 def calc_standby_from_w(cur, where_sql, params):
-    rows = cur.execute(
-        f"SELECT active_power_w FROM measurements WHERE active_power_w > 0 AND ({where_sql}) ORDER BY active_power_w ASC",
-        params,
-    ).fetchall()
-    vals = [float(r["active_power_w"]) for r in rows if r["active_power_w"] is not None]
-    if not vals:
+    """The standby power is the 15th percentile of the positive power values. SQLite finds it, so no list of
+    values is built in Python. where_sql is fixed text from the code. Every value goes in params."""
+    base = " FROM measurements WHERE active_power_w > 0 AND (" + where_sql + ")"
+    n = cur.execute("SELECT COUNT(*)" + base, params).fetchone()[0]
+    if not n:
         return 0, 0.0
-    idx = min(len(vals) - 1, int(len(vals) * 0.15))
-    sb_w = int(round(vals[idx]))
+    idx = min(n - 1, int(n * 0.15))
+    row = cur.execute("SELECT active_power_w" + base + " ORDER BY active_power_w ASC LIMIT 1 OFFSET ?", tuple(params) + (idx,)).fetchone()
+    sb_w = int(round(float(row[0])))
     # One row for each poll, so the hours come from the poll interval.
-    hours = len(vals) * POLL_INTERVAL_SEC / 3600.0
+    hours = n * POLL_INTERVAL_SEC / 3600.0
     sb_kwh = round((sb_w / 1000.0) * hours, 2)
     return sb_w, sb_kwh
 
@@ -277,7 +297,8 @@ def _history(c, p, qs):
     cur = c.cursor()
     rate = current_rate_sek(cur)
     if p == "now":
-        rows = cur.execute("SELECT strftime('%H:%M',ts_utc,'localtime') AS label,ROUND(AVG(active_power_w),0) AS val FROM measurements WHERE date(ts_utc,'localtime')=date('now','localtime') GROUP BY strftime('%Y-%m-%d %H:%M',ts_utc,'localtime') ORDER BY label ASC").fetchall()
+        today = cur.execute("SELECT date('now','localtime') d").fetchone()["d"]
+        rows = cur.execute("SELECT strftime('%H:%M',ts_utc,'localtime') AS label,ROUND(AVG(active_power_w),0) AS val FROM measurements WHERE " + RANGE + " GROUP BY strftime('%Y-%m-%d %H:%M',ts_utc,'localtime') ORDER BY label ASC", day_bounds(cur, today, "+1 day")).fetchall()
         ph = build_phases(cur, p, qs)
         pts_out = [{"label": r["label"], "val": int(r["val"] or 0), "sek": round(((r["val"] or 0) / 1000.0) * rate, 2)} for r in rows]
         sb_w, sb_kwh, sb_sek = calc_standby(pts_out, rate)
@@ -285,9 +306,10 @@ def _history(c, p, qs):
     if p == "day":
         off = int_arg(qs, "offset", 0, -3650, 0)
         d_sel = cur.execute("SELECT date('now','localtime',?||' days') d", (off,)).fetchone()["d"]
-        rows = cur.execute("SELECT strftime('%H:%M',ts_utc,'localtime') AS label,ROUND(AVG(active_power_w),0) AS val FROM measurements WHERE date(ts_utc,'localtime')=? GROUP BY strftime('%Y-%m-%d %H:%M',ts_utc,'localtime') ORDER BY label ASC", (d_sel,)).fetchall()
+        d_bounds = day_bounds(cur, d_sel, "+1 day")
+        rows = cur.execute("SELECT strftime('%H:%M',ts_utc,'localtime') AS label,ROUND(AVG(active_power_w),0) AS val FROM measurements WHERE " + RANGE + " GROUP BY strftime('%Y-%m-%d %H:%M',ts_utc,'localtime') ORDER BY label ASC", d_bounds).fetchall()
         dk, _, _, _ = cur_keys(cur)
-        mk_d = m_kwh(cur, "date(ts_utc,'localtime')=?", (d_sel,))
+        mk_d = m_kwh(cur, RANGE, d_bounds)
         extra_h = h_kwh(cur, "day", dk) if off == 0 else (h_kwh(cur, "day", d_sel) if mk_d == 0.0 else 0.0)
         dkwh = round(mk_d + extra_h, 3)
         ph = build_phases(cur, p, qs)
@@ -300,19 +322,21 @@ def _history(c, p, qs):
         days = [cur.execute("SELECT date(?,'+'||?||' days') d", (d0, i)).fetchone()["d"] for i in range(7)]
         lbls = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
         ms = {"01": "Jan", "02": "Feb", "03": "Mar", "04": "Apr", "05": "May", "06": "Jun", "07": "Jul", "08": "Aug", "09": "Sep", "10": "Oct", "11": "Nov", "12": "Dec"}
-        rows = cur.execute("SELECT date(ts_utc,'localtime') d,ROUND(MAX(total_power_import_kwh)-MIN(total_power_import_kwh),3) v FROM measurements WHERE date(ts_utc,'localtime') BETWEEN ? AND date(?,'+6 days') AND (raw_json IS NULL OR raw_json NOT LIKE '%source%csv_import%') GROUP BY d", (d0, d0)).fetchall()
+        w_bounds = day_bounds(cur, d0, "+7 days")
+        rows = cur.execute("SELECT date(ts_utc,'localtime') d,ROUND(MAX(total_power_import_kwh)-MIN(total_power_import_kwh),3) v FROM measurements WHERE " + RANGE + " AND (raw_json IS NULL OR raw_json NOT LIKE '%source%csv_import%') GROUP BY d", w_bounds).fetchall()
         rm = {r["d"]: float(r["v"] or 0.0) for r in rows}
         hm = h_map(cur, "day")
-        wkwh = round(m_kwh(cur, "date(ts_utc,'localtime') BETWEEN ? AND date(?,'+6 days')", (d0, d0)) + sum(hm.get(d, 0.0) for d in days), 3)
+        wkwh = round(m_kwh(cur, RANGE, w_bounds) + sum(hm.get(d, 0.0) for d in days), 3)
         ph = build_phases(cur, p, qs)
         pts = [{"label": lbls[i], "date_lbl": f"{lbls[i]} {int(d.split('-')[2])} {ms.get(d.split('-')[1], d.split('-')[1])}", "val": round(rm.get(d, 0.0) + hm.get(d, 0.0), 3), "sek": round((rm.get(d, 0.0) + hm.get(d, 0.0)) * rate, 2)} for i, d in enumerate(days)]
         wk_no = date.fromisoformat(d0).isocalendar()[1]
-        sb_w, sb_kwh = calc_standby_from_w(cur, "date(ts_utc,'localtime') BETWEEN ? AND date(?,'+6 days')", (d0, d0))
+        sb_w, sb_kwh = calc_standby_from_w(cur, RANGE, w_bounds)
         return {"period": "week", "chart": "bar", "unit": "kWh", "offset": off, "week": wk_no, "week_label": f"week {wk_no}", "start_date": d0, "end_date": days[-1], "total_kwh": wkwh, "total_sek": round(wkwh * rate, 2), "standby_w": sb_w, "standby_kwh": sb_kwh, "points": pts, "phases": ph}
     if p == "month":
         off = int_arg(qs, "offset", 0, -3650, 0)
         yr_sel = cur.execute("SELECT strftime('%Y',date('now','localtime','start of year',?||' years')) y", (off,)).fetchone()["y"]
-        rows = cur.execute("SELECT strftime('%Y-%m',ts_utc,'localtime') k,ROUND(MAX(total_power_import_kwh)-MIN(total_power_import_kwh),3) v FROM measurements WHERE strftime('%Y',ts_utc,'localtime')=? AND (raw_json IS NULL OR raw_json NOT LIKE '%source%csv_import%') GROUP BY k ORDER BY k", (yr_sel,)).fetchall()
+        y_bounds = day_bounds(cur, yr_sel + "-01-01", "+1 year")
+        rows = cur.execute("SELECT strftime('%Y-%m',ts_utc,'localtime') k,ROUND(MAX(total_power_import_kwh)-MIN(total_power_import_kwh),3) v FROM measurements WHERE " + RANGE + " AND (raw_json IS NULL OR raw_json NOT LIKE '%source%csv_import%') GROUP BY k ORDER BY k", y_bounds).fetchall()
         hm = h_map(cur, "month")
         for k, v in h_map(cur, "day").items():
             hm[k[:7]] = round(hm.get(k[:7], 0.0) + v, 3)
@@ -329,7 +353,7 @@ def _history(c, p, qs):
             pts.append({"label": month_label(ym_k), "date_lbl": month_label(ym_k), "val": val, "sek": round(val * rate, 2)})
         mkwh = round(sum(x["val"] for x in pts), 3)
         ph = build_phases(cur, p, qs)
-        sb_w, sb_kwh = calc_standby_from_w(cur, "strftime('%Y',ts_utc,'localtime')=?", (yr_sel,))
+        sb_w, sb_kwh = calc_standby_from_w(cur, RANGE, y_bounds)
         return {"period": "month", "chart": "bar", "unit": "kWh", "offset": off, "year": yr_sel, "month_label": yr_sel, "total_kwh": mkwh, "total_sek": round(mkwh * rate, 2), "standby_w": sb_w, "standby_kwh": sb_kwh, "points": pts, "phases": ph}
     if p == "year":
         rows = cur.execute("SELECT strftime('%Y',ts_utc,'localtime') k,ROUND(MAX(total_power_import_kwh)-MIN(total_power_import_kwh),3) v FROM measurements WHERE (raw_json IS NULL OR raw_json NOT LIKE '%source%csv_import%') GROUP BY k ORDER BY k").fetchall()
@@ -354,10 +378,15 @@ def history(p, qs):
 
 
 class H(BaseHTTPRequestHandler):
+    # Seconds a client may take to send its request. A client that is slower is dropped, so it cannot hold a thread for ever.
+    timeout = 15
+
     def send_bytes(self, code, ctype, data):
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(data)))
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
         self.end_headers()
         self.wfile.write(data)
 
@@ -418,7 +447,9 @@ class H(BaseHTTPRequestHandler):
                 }
                 self.send_bytes(200 if ok else 503, "application/json", json.dumps(payload).encode())
             except Exception as e:
-                payload = {"ok": False, "status": "db_error", "error": str(e)}
+                # The details go to the log. The client only learns that the database does not answer.
+                print(f"[HEALTH_ERR] {type(e).__name__}: {e}", flush=True)
+                payload = {"ok": False, "status": "db_error"}
                 self.send_bytes(503, "application/json", json.dumps(payload).encode())
         elif path == "/history":
             per = (qs.get("period", ["now"])[0] or "now").lower()
@@ -430,6 +461,35 @@ class H(BaseHTTPRequestHandler):
     def log_message(self, *a):
         return
 
+    def log_request(self, code="-", size="-"):
+        """Log only the answers that are errors (400 and above), with the path and without the query."""
+        try:
+            failed = int(code) >= 400
+        except (TypeError, ValueError):
+            failed = False
+        if failed:
+            print(f"[HTTP] {self.command} {self.path.split('?')[0]} -> {code}", flush=True)
+
+
+def _stop(signum, frame):
+    """Turn SIGTERM into a normal exit, so that the server closes its socket."""
+    sys.exit(0)
+
+
+def describe_start():
+    return f"[START] api_server on {API_HOST}:{PORT}, database {DB}"
+
+
+def main():
+    server = ThreadingHTTPServer((API_HOST, PORT), H)
+    print(describe_start(), flush=True)
+    try:
+        server.serve_forever()
+    finally:
+        server.server_close()
+
 
 if __name__ == "__main__":
-    ThreadingHTTPServer((API_HOST, PORT), H).serve_forever()
+    # systemd and Docker stop a program with SIGTERM. Python does not run `finally` for it by default.
+    signal.signal(signal.SIGTERM, _stop)
+    main()

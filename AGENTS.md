@@ -175,7 +175,9 @@ docs/ARCHITECTURE.md        # How the program is built and what it does: archite
 - Standard library only. A new package needs the user's explicit approval.
 - Time: store UTC. New and changed code takes the clock as a parameter. Never use `datetime.now()` without a time zone.
 - SQL: every value from a request or from the meter goes in a `?` placeholder. Never build SQL from request text.
+- A period (a day, week, month or year) is a range on `ts_utc`: use `RANGE` and `day_bounds()` in `api_server.py`. Never filter it with a function on `ts_utc`, such as `date(ts_utc,'localtime')=...`. SQLite cannot use the index then, and the query reads the whole table. A new query on a period needs a test that compares it with the old expression, also on the days that summer time changes.
+- An index is created with `CREATE INDEX IF NOT EXISTS` in `init_db`, so that an existing database gets it. Say in `docs/ARCHITECTURE.md` what the index is for.
 - Input: bound every input from a request (`hours` 1 to `HW_PQ_MAX_HOURS`, `offset` a whole number) and answer a bad value with a default or a 400, never with a crash.
-- Log to standard output with a tag in square brackets, for example `[STALE]` or `[SIGNAL_ERR]`. The systemd journal keeps it. Never log a phone number or the Signal URL.
-- Open an SQLite connection in a `with` block or close it in `finally`.
+- Log to standard output with a tag in square brackets, for example `[START]`, `[STALE]`, `[HTTP]` or `[SIGNAL_ERR]`. The systemd journal and Docker keep it. Never log a phone number, the Signal URL or the address of the meter. Never send the text of an exception to a client.
+- Open an SQLite connection in a `with` block or close it in `finally`. A long-running program must stop cleanly on `SIGTERM`, so that `finally` runs.
 - Everything in English (see Languages).

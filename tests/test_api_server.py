@@ -1,11 +1,21 @@
 import json
+import os
+import random
+import signal
+import socket
 import sqlite3
+import subprocess
+import sys
+import tempfile
 import threading
+import time
 import unittest
 import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
 from unittest import mock
+
+from datetime import datetime, timezone
 
 from tests.helpers import fresh, make_db, timedelta, utc_now
 
@@ -242,6 +252,209 @@ class PlaceholderTests(unittest.TestCase):
             source = f.read()
         self.assertNotIn("{d_sel}", source)
         self.assertNotIn("{d0}", source)
+
+
+@unittest.skipUnless(hasattr(time, "tzset"), "needs time.tzset")
+class PeriodRangeTests(unittest.TestCase):
+    """A range on ts_utc must select exactly the rows that date(ts_utc,'localtime') selected."""
+
+    def setUp(self):
+        self.old_tz = os.environ.get("TZ")
+        os.environ["TZ"] = "Europe/Stockholm"
+        time.tzset()
+        self.addCleanup(self.restore_tz)
+        self.api = fresh("api_server")
+        rows = []
+        # Around both changes of summer time, the end of a year, and the end of a month. One row every 20 minutes.
+        for first, last in (("2026-03-27", "2026-04-01"), ("2026-10-23", "2026-10-28"), ("2025-12-29", "2026-01-03"), ("2026-01-30", "2026-03-03")):
+            moment = datetime.fromisoformat(first).replace(tzinfo=timezone.utc)
+            end = datetime.fromisoformat(last).replace(tzinfo=timezone.utc)
+            while moment < end:
+                rows.append({"ts": moment, "w": 100.0, "kwh": 1.0})
+                moment += timedelta(minutes=20)
+        path = make_db(rows)
+        self.conn = sqlite3.connect(path)
+        self.conn.row_factory = sqlite3.Row
+        self.addCleanup(self.conn.close)
+
+    def restore_tz(self):
+        if self.old_tz is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = self.old_tz
+        time.tzset()
+
+    def ids(self, where, params):
+        return [r[0] for r in self.conn.execute("SELECT id FROM measurements WHERE " + where + " ORDER BY id", params)]
+
+    def test_a_day_selects_the_same_rows_also_on_the_days_summer_time_changes(self):
+        cur = self.conn.cursor()
+        for day in ("2026-03-28", "2026-03-29", "2026-03-30", "2026-10-24", "2026-10-25", "2026-10-26", "2025-12-31", "2026-01-01", "2026-02-28"):
+            old = self.ids("date(ts_utc,'localtime')=?", (day,))
+            new = self.ids(self.api.RANGE, self.api.day_bounds(cur, day, "+1 day"))
+            self.assertEqual(new, old, day)
+            self.assertTrue(old, day)
+
+    def test_a_week_selects_the_same_rows(self):
+        cur = self.conn.cursor()
+        for monday in ("2026-03-23", "2026-03-30", "2026-10-19", "2026-10-26", "2025-12-29"):
+            old = self.ids("date(ts_utc,'localtime') BETWEEN ? AND date(?,'+6 days')", (monday, monday))
+            new = self.ids(self.api.RANGE, self.api.day_bounds(cur, monday, "+7 days"))
+            self.assertEqual(new, old, monday)
+
+    def test_a_month_selects_the_same_rows(self):
+        cur = self.conn.cursor()
+        for month in ("2026-01", "2026-02", "2026-03", "2026-10", "2025-12"):
+            old = self.ids("strftime('%Y-%m',ts_utc,'localtime')=?", (month,))
+            new = self.ids(self.api.RANGE, self.api.day_bounds(cur, month + "-01", "+1 month"))
+            self.assertEqual(new, old, month)
+
+    def test_a_year_selects_the_same_rows(self):
+        cur = self.conn.cursor()
+        for year in ("2025", "2026"):
+            old = self.ids("strftime('%Y',ts_utc,'localtime')=?", (year,))
+            new = self.ids(self.api.RANGE, self.api.day_bounds(cur, year + "-01-01", "+1 year"))
+            self.assertEqual(new, old, year)
+
+    def test_the_bounds_have_the_format_of_ts_utc(self):
+        lo, hi = self.api.day_bounds(self.conn.cursor(), "2026-03-29", "+1 day")
+        self.assertRegex(lo, r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d$")
+        self.assertRegex(hi, r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d$")
+        self.assertEqual((lo, hi), ("2026-03-28T23:00:00", "2026-03-29T22:00:00"))   # a 23 hour day
+
+    def test_a_day_query_uses_the_index_on_ts_utc(self):
+        plan = " ".join(r["detail"] for r in self.conn.execute(
+            "EXPLAIN QUERY PLAN SELECT AVG(active_power_w) FROM measurements WHERE " + self.api.RANGE, ("a", "b")))
+        self.assertIn("idx_measurements_ts", plan)
+
+    def test_no_query_filters_a_period_with_a_function_on_ts_utc(self):
+        with open(self.api.__file__, encoding="utf-8") as f:
+            source = f.read()
+        self.assertNotIn("WHERE date(ts_utc,'localtime')", source)
+        self.assertNotRegex(source, r"WHERE strftime\('%Y(-%m)?',ts_utc,'localtime'\)=")
+
+
+class StandbyFromSqlTests(unittest.TestCase):
+    """The percentile that SQLite finds is the one the old Python code found."""
+
+    def setUp(self):
+        self.api = fresh("api_server")
+
+    def reference(self, values, poll):
+        vals = sorted(v for v in values if v is not None and v > 0)
+        if not vals:
+            return 0, 0.0
+        idx = min(len(vals) - 1, int(len(vals) * 0.15))
+        sb_w = int(round(vals[idx]))
+        return sb_w, round((sb_w / 1000.0) * (len(vals) * poll / 3600.0), 2)
+
+    def run_case(self, values):
+        now = utc_now()
+        path = make_db([{"ts": now - timedelta(seconds=10 * i), "w": v} for i, v in enumerate(values)])
+        conn = sqlite3.connect(path)
+        conn.row_factory = sqlite3.Row
+        try:
+            with mock.patch.object(self.api, "POLL_INTERVAL_SEC", 10):
+                return self.api.calc_standby_from_w(conn.cursor(), "1=1", ())
+        finally:
+            conn.close()
+
+    def test_random_data_gives_the_same_answer_as_the_reference(self):
+        rng = random.Random(5)
+        for size in (1, 2, 3, 7, 20, 99, 100, 101, 500):
+            values = [rng.choice((None, 0.0, -5.0, rng.uniform(1, 5000), 120.0, 120.0)) for _ in range(size)]
+            self.assertEqual(self.run_case(values), self.reference(values, 10), size)
+
+    def test_no_positive_value_is_no_standby(self):
+        self.assertEqual(self.run_case([0.0, 0.0, -1.0]), (0, 0.0))
+        self.assertEqual(self.run_case([]), (0, 0.0))
+
+    def test_the_power_index_is_created_by_the_collector(self):
+        path = make_db()
+        conn = sqlite3.connect(path)
+        try:
+            names = {r[1] for r in conn.execute("PRAGMA index_list(measurements)")}
+        finally:
+            conn.close()
+        self.assertIn("idx_measurements_power", names)
+        self.assertIn("idx_measurements_ts", names)
+
+
+class HardeningTests(ServerTestCase):
+    def logged(self, mock_print):
+        return " ".join(str(c.args[0]) for c in mock_print.call_args_list if c.args)
+
+    def test_a_database_error_does_not_reach_the_client(self):
+        with mock.patch.object(self.api, "conn", side_effect=sqlite3.OperationalError("unable to open /secret/path/x.db")), \
+             mock.patch("builtins.print") as printed:
+            status, body = self.get("/health")
+        self.assertEqual(status, 503)
+        self.assertEqual(json.loads(body), {"ok": False, "status": "db_error"})
+        self.assertNotIn(b"secret", body)
+        self.assertIn("[HEALTH_ERR] OperationalError", self.logged(printed))
+
+    def test_only_errors_are_logged_and_without_the_query(self):
+        with mock.patch("builtins.print") as printed:
+            self.assertEqual(self.get("/stats")[0], 200)
+            self.assertEqual(self.get("/nope?token=abc")[0], 404)
+        text = self.logged(printed)
+        self.assertIn("[HTTP] GET /nope -> 404", text)
+        self.assertNotIn("token", text)
+        self.assertNotIn("/stats", text)
+
+    def test_the_answers_have_safe_headers(self):
+        with urllib.request.urlopen(f"http://127.0.0.1:{self.port}/health", timeout=5) as r:
+            self.assertEqual(r.headers["X-Content-Type-Options"], "nosniff")
+            self.assertEqual(r.headers["Referrer-Policy"], "no-referrer")
+
+    def test_a_client_that_sends_nothing_is_dropped(self):
+        with mock.patch.object(self.api.H, "timeout", 0.3):
+            with socket.create_connection(("127.0.0.1", self.port), timeout=5) as sock:
+                sock.settimeout(5)
+                started = time.monotonic()
+                self.assertEqual(sock.recv(10), b"")          # the server closed the connection
+                self.assertLess(time.monotonic() - started, 3)
+
+    def test_the_server_has_a_default_timeout(self):
+        self.assertGreater(self.api.H.timeout, 0)
+
+
+class ServerShutdownTests(unittest.TestCase):
+    def test_the_stop_handler_is_a_normal_exit(self):
+        api = fresh("api_server")
+        with self.assertRaises(SystemExit) as raised:
+            api._stop(signal.SIGTERM, None)
+        self.assertEqual(raised.exception.code, 0)
+
+    def test_the_start_line_has_the_address_and_no_secret(self):
+        api = fresh("api_server")
+        line = api.describe_start()
+        self.assertTrue(line.startswith("[START] api_server on "))
+
+    @unittest.skipIf(os.name == "nt", "SIGTERM works differently on Windows")
+    def test_the_real_program_stops_cleanly_on_sigterm(self):
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        probe = socket.socket()
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+        probe.close()
+        env = {**os.environ, "HW_DB_PATH": os.path.join(tempfile.mkdtemp(prefix="hw-test-"), "t.db"),
+               "HW_API_HOST": "127.0.0.1", "HW_API_PORT": str(port)}
+        proc = subprocess.Popen([sys.executable, "api_server.py"], cwd=root, env=env,
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        try:
+            for _ in range(50):                                   # wait until it listens
+                try:
+                    socket.create_connection(("127.0.0.1", port), timeout=0.2).close()
+                    break
+                except OSError:
+                    time.sleep(0.1)
+            proc.send_signal(signal.SIGTERM)
+            self.assertEqual(proc.wait(timeout=10), 0)
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+            proc.stdout.close()
 
 
 class HealthTests(unittest.TestCase):

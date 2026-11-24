@@ -59,6 +59,8 @@ def _create_schema(c):
     )
     """)
     c.execute("CREATE INDEX IF NOT EXISTS idx_measurements_ts ON measurements(ts_utc)")
+    # The standby power is a percentile of the power values. With this index SQLite finds it without sorting every row.
+    c.execute("CREATE INDEX IF NOT EXISTS idx_measurements_power ON measurements(active_power_w)")
     c.execute("""
     CREATE TABLE IF NOT EXISTS historical_kwh (
         period_type TEXT NOT NULL,
@@ -86,6 +88,12 @@ def _create_schema(c):
     )
     """)
     c.commit()
+
+
+def describe_start():
+    """One line for the log at the start. It holds no address and no number."""
+    signal_state = "on" if (SIGNAL_URL and SIGNAL_FROM and SIGNAL_TO) else "off"
+    return f"[START] collector: poll every {POLL_INTERVAL_SEC} s, Signal {signal_state}, database {DB_PATH}"
 
 
 def warn_if_not_set_up():
@@ -149,6 +157,7 @@ def _stop(signum, frame):
 def main():
     conn = init_db(DB_PATH)
     try:
+        print(describe_start(), flush=True)
         warn_if_not_set_up()
         while True:
             try:

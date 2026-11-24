@@ -15,6 +15,7 @@ COPY --chown=hw:hw config.py collector.py api_server.py notify_signal.py tariff_
      alarm_stale.py alarm_voltage.py ui.html ./
 
 ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
     HW_DB_PATH=/data/homewizard.db
 VOLUME /data
 USER hw

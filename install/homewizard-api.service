@@ -8,6 +8,18 @@ WorkingDirectory=/opt/homewizard
 ExecStart=/usr/bin/python3 /opt/homewizard/api_server.py
 Restart=always
 RestartSec=5
+# Hardening. The program writes only in /opt/homewizard. If you move the database with HW_DB_PATH,
+# add its folder to ReadWritePaths.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ReadWritePaths=/opt/homewizard
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=yes
 
 [Install]
 WantedBy=multi-user.target

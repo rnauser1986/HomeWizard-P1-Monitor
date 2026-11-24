@@ -224,6 +224,35 @@ class ShutdownTests(unittest.TestCase):
             proc.stdout.close()
 
 
+class StartLineTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = fresh("collector")
+
+    def test_the_start_line_says_whether_signal_is_on_and_shows_no_value(self):
+        secret_url, secret_from, secret_to = "http://signal.invalid:8080", "+" + "1" * 11, "+" + "2" * 11   # built at run time, so no number is in the file
+        with mock.patch.object(self.mod, "SIGNAL_URL", secret_url), \
+             mock.patch.object(self.mod, "SIGNAL_FROM", secret_from), \
+             mock.patch.object(self.mod, "SIGNAL_TO", secret_to):
+            line = self.mod.describe_start()
+        self.assertIn("Signal on", line)
+        for value in (secret_url, secret_from, secret_to, self.mod.HOMEWIZARD_URL):
+            self.assertNotIn(value, line)
+
+    def test_signal_off_is_said(self):
+        with mock.patch.object(self.mod, "SIGNAL_URL", ""):
+            self.assertIn("Signal off", self.mod.describe_start())
+
+    def test_the_loop_prints_the_start_line_first(self):
+        with mock.patch.object(self.mod, "init_db", return_value=mock.MagicMock()), \
+             mock.patch.object(self.mod, "warn_if_not_set_up"), \
+             mock.patch.object(self.mod, "poll_once"), \
+             mock.patch.object(self.mod.time, "sleep", side_effect=KeyboardInterrupt()), \
+             mock.patch("builtins.print") as printed:
+            with self.assertRaises(KeyboardInterrupt):
+                self.mod.main()
+        self.assertTrue(str(printed.call_args_list[0].args[0]).startswith("[START] collector"))
+
+
 class StartWarningTests(unittest.TestCase):
     def setUp(self):
         self.mod = fresh("collector")

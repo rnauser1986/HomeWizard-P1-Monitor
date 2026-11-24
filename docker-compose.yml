@@ -6,6 +6,20 @@ x-common: &common
   build: .
   image: homewizard-p1:local
   restart: unless-stopped
+  # Hardening. The programs write only to the data volume, need no Linux capability and open one port above 1024.
+  read_only: true
+  tmpfs:
+    - /tmp
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  # Without a limit, Docker keeps the whole log of a container until the disk is full.
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
   env_file:
     - path: .env
       required: false

@@ -50,7 +50,19 @@ if [ "$uid" = "0" ]; then fail "the collector runs as root"; fi
 echo "5. The database is in the volume"
 $COMPOSE exec -T collector test -s /data/homewizard.db || fail "no database in /data"
 
-echo "6. The collector stops cleanly on SIGTERM"
+echo "6. The root file system is read-only and the data volume is writable"
+if $COMPOSE exec -T collector touch /app/should-not-exist 2>/dev/null; then fail "the program folder is writable"; fi
+$COMPOSE exec -T collector touch /data/writable-check || fail "the data volume is not writable"
+
+echo "7. The api stops cleanly on SIGTERM"
+start=$(date +%s)
+$COMPOSE stop -t 10 api
+elapsed=$(( $(date +%s) - start ))
+code=$(docker inspect -f '{{.State.ExitCode}}' "$($COMPOSE ps -aq api)")
+if [ "$code" != "0" ]; then fail "the api stopped with exit code $code"; fi
+if [ "$elapsed" -ge 9 ]; then fail "the api needed $elapsed seconds to stop (it was killed)"; fi
+
+echo "8. The collector stops cleanly on SIGTERM"
 start=$(date +%s)
 $COMPOSE stop -t 10 collector
 elapsed=$(( $(date +%s) - start ))
