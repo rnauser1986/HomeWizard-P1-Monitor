@@ -46,14 +46,15 @@ Run it again for an update.
 
 ## Run with Docker
 
-No install on the host. You need Docker with the Compose plugin.
+No install on the host. You need Docker with the Compose plugin. The setup script asks for what the program needs (the address
+of the meter, the web port and, if you want, the Signal values), writes `.env` and starts the containers:
 
 ```sh
-cp .env.example .env     # set HW_METER_URL, and the HW_SIGNAL_* values for Signal
-docker compose up -d --build
+sh install/docker-setup.sh
 ```
 
-Open `http://<host>:8085/`. The database is in the Docker volume `data` and stays when you update. See "Run with Docker" in
+Open `http://<host>:8085/`. To do it by hand, copy `.env.example` to `.env`, set `HW_METER_URL` and run
+`docker compose up -d --build`. The database is in the Docker volume `data` and stays when you update. See "Run with Docker" in
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#run-with-docker) for the backup, the update and how to move a host install.
 
 ## Move an older install
@@ -88,7 +89,7 @@ The program has no sign-in. Use it on the home network only, or through a VPN. N
 | `pq_data.py`, `pq_page.py`, `pq_route.py` | Power quality. `pq_route.py` is optional and needs Flask. |
 | `tariff_mod.py` | Price per kWh, fixed or spot price (`SE1` to `SE4`). |
 | `Dockerfile`, `docker-compose.yml` | The image and the two services for Docker. |
-| `install/` | The install script, the script that moves an older install, the systemd units and the backup script. |
+| `install/` | The install script, the Docker setup script, the script that moves an older install, the systemd units and the backup script. |
 | `tests/` | The tests. |
 
 ## Tests

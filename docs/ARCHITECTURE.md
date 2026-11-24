@@ -470,7 +470,17 @@ The repository has a `Dockerfile` and a `docker-compose.yml`. They run the same 
 | `data` volume | Mounted at `/data` in both services. It holds `homewizard.db`. It stays when the containers are removed. |
 | Hardening | The root file system is read-only (`read_only`, with a `tmpfs` for `/tmp`). All Linux capabilities are dropped (`cap_drop: ALL`). `no-new-privileges` is on. The log of each container is limited to 3 files of 10 MB. |
 
-**Start**
+**Start with the setup script**
+
+`sh install/docker-setup.sh` checks that Docker and the Compose plugin are there, asks for the meter address (an IP address is
+enough, the script adds `http://` and `/api/v1/data` and checks that the meter answers), the web port, the time zone, the price
+area and, if you want Signal, the three Signal values. It writes `.env` with mode 600, runs `docker compose up -d --build` and waits
+for `/health`. It can run again: an existing `.env` is kept when you say so, and a replaced one is saved as `.env.bak`.
+`--yes` asks nothing and takes the answers from the environment (`HW_METER_URL=192.168.1.50 sh install/docker-setup.sh --yes`).
+`--no-check` skips the call to the meter and the wait for `/health`. The script writes only the settings it asks for. Every other
+setting has its default. Add a line to `.env` to change one. `tests/test_docker_setup.py` tests the script with a fake `docker`.
+
+**Start by hand**
 
 1. Install Docker with the Compose plugin.
 2. Copy `.env.example` to `.env` and set `HW_METER_URL`. This is the only required setting. Set the three `HW_SIGNAL_*` values for
