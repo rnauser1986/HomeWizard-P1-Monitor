@@ -11,6 +11,7 @@ Fixes Issue #
 - [ ] I read the safety rules in `AGENTS.md`. No rule is broken.
 - [ ] I updated `docs/ARCHITECTURE.md`, `README.md` and `.env.example` where this change made them wrong.
 - [ ] The independent review covers the latest commit.
+- [ ] AI assistance: none / which tool wrote or changed what. A person has read the whole diff.
 
 ## Output
 ```

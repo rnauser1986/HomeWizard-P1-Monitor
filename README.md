@@ -5,6 +5,11 @@ the phases and the voltage, sends alarms through Signal, and shows statistics an
 
 It uses the Python 3 standard library only. Nothing to install with `pip`.
 
+> **Built with AI assistance.** Google Gemini helped to create the first version of this program. Claude (Anthropic) helped to
+> clean it up, test it, fix problems that a review found, package it for Docker and write the documentation. The owner decides what
+> the program does, adjusts the installation and runs it on their own network. See
+> [AI assistance](AGENTS.md#ai-assistance) for who did what and how the result is checked.
+
 ## Install
 
 On a Debian host, as root, from the unpacked repository:

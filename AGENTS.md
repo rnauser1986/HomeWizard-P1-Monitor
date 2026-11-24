@@ -22,6 +22,31 @@ The program does not switch anything. The risk is a wrong or a missing alarm, or
 
 ---
 
+## AI assistance
+
+This program was built with the help of AI tools, together with a person.
+
+| Who | What |
+| --- | --- |
+| Google Gemini | Helped to create the first version of the whole program: the collector, the alarms, the web server and the pages. |
+| Claude (Anthropic) | Moved the settings into `config.py` and `.env`, translated the program to English, wrote the tests and the documentation, fixed the problems that a review found, and made the install scripts and the Docker files. |
+| The owner | Decides what the program does. Adjusted the installation. Runs the program on the real meter. Reads and approves the changes. |
+
+How the result is checked:
+
+- **By code.** The tests in `tests/` and the workflow in `.github/workflows/build.yml` run on every push. The rules in this file
+  that a test can check are tests (see Testing).
+- **By a person.** The owner reads each change and tries it on a real installation before it counts as done.
+- **A test does not replace that.** The tests use made-up readings. They do not prove that the real meter, the real Signal server
+  or the real price service behave as the tests assume.
+
+Rules for a new change:
+
+- Say in the pull request when an AI tool wrote part of the change. The template has a line for it.
+- A person reads the whole diff before it is merged. AI output is a draft, not a decision.
+- An AI tool may add a `Co-Authored-By:` line to a commit it helped with.
+- Do not paste secrets, phone numbers or the content of `.env` into an AI tool.
+
 ## Languages
 
 - **Everything is in English:** the pages, code, comments, log messages, alarm messages, tests, commit messages, pull requests, issues, `README.md` and this file. Translations of the pages may come later.
