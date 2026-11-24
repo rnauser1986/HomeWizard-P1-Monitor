@@ -2,6 +2,7 @@
 # Set up HomeWizard P1 with Docker. The script asks for what the program needs, writes .env and starts the containers.
 # Run it from the repository, as a normal user who may run Docker:
 #   sh install/docker-setup.sh
+# HW_DOCKER can be "sudo docker" when the user may not talk to the Docker daemon.
 # Options:
 #   --yes       Ask nothing. Take every answer from the environment (HW_METER_URL, HW_WEB_PORT, TZ, HW_PRICE_AREA,
 #               HW_SIGNAL_URL, HW_SIGNAL_FROM, HW_SIGNAL_TO). HW_METER_URL is required.
@@ -59,8 +60,9 @@ yes_no() {
     case "$answer" in y|Y|yes|YES|j|J) return 0 ;; *) return 1 ;; esac
 }
 
-command -v docker >/dev/null 2>&1 || fail "Docker is not installed. See https://docs.docker.com/engine/install/"
-docker compose version >/dev/null 2>&1 || fail "The Docker Compose plugin is missing. See https://docs.docker.com/compose/install/"
+DOCKER="${HW_DOCKER:-docker}"
+command -v "${DOCKER%% *}" >/dev/null 2>&1 || fail "Docker is not installed. See https://docs.docker.com/engine/install/"
+$DOCKER compose version >/dev/null 2>&1 || fail "The Docker Compose plugin is missing. See https://docs.docker.com/compose/install/"
 [ -f docker-compose.yml ] || fail "docker-compose.yml is not in $REPO_DIR"
 
 # An existing .env: keep it, or write a new one and keep the old one as .env.bak.
@@ -143,10 +145,12 @@ if [ "$WRITE_ENV" -eq 1 ]; then
 fi
 
 echo "Starting the containers (the first build takes a minute)..."
-docker compose up -d --build
+$DOCKER compose up -d --build
 
 PORT="$(sed -n 's/^HW_WEB_PORT=//p' .env | tail -n 1)"
 PORT="${PORT:-8085}"
+HOST="$(hostname -I 2>/dev/null | sed 's/ .*//')"
+HOST="${HOST:-<this host>}"
 
 if [ "$CHECK" -eq 1 ] && command -v curl >/dev/null 2>&1; then
     printf 'Waiting for the first measurement'
@@ -154,7 +158,7 @@ if [ "$CHECK" -eq 1 ] && command -v curl >/dev/null 2>&1; then
     while [ "$tries" -lt 30 ]; do
         if curl -fsS --max-time 3 "http://127.0.0.1:$PORT/health" >/dev/null 2>&1; then
             echo
-            echo "Running. Open http://<this host>:$PORT/"
+            echo "Running. Open http://$HOST:$PORT/"
             exit 0
         fi
         printf '.'
@@ -165,4 +169,4 @@ if [ "$CHECK" -eq 1 ] && command -v curl >/dev/null 2>&1; then
     echo "No measurement yet. Check the meter address and read the log: docker compose logs collector" >&2
     exit 1
 fi
-echo "Started. Open http://<this host>:$PORT/"
+echo "Started. Open http://$HOST:$PORT/"

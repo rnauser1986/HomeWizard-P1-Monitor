@@ -470,6 +470,20 @@ The repository has a `Dockerfile` and a `docker-compose.yml`. They run the same 
 | `data` volume | Mounted at `/data` in both services. It holds `homewizard.db`. It stays when the containers are removed. |
 | Hardening | The root file system is read-only (`read_only`, with a `tmpfs` for `/tmp`). All Linux capabilities are dropped (`cap_drop: ALL`). `no-new-privileges` is on. The log of each container is limited to 3 files of 10 MB. |
 
+**One line with no download by hand**
+
+`install/get.sh` installs Docker with Docker's own script (`get.docker.com`) when it is missing, using `sudo` unless you are
+root. `--no-docker-install` stops instead. It downloads the repository as an archive (`curl` and `tar`, no `git`) into
+`HW_INSTALL_DIR` (default `~/homewizard-p1`), then runs `install/docker-setup.sh`. When the user may not talk to the Docker
+daemon, it runs Docker with `sudo` (`HW_DOCKER`). The questions are read from the keyboard (`/dev/tty`) also when the script comes
+through a pipe. Without a keyboard it stops, unless you pass `--yes`:
+`curl -fsSL <url> | HW_METER_URL=192.168.1.50 sh -s -- --yes`. `HW_REPO` and `HW_REF` choose another repository, branch or tag (use
+a tag to pin a version). A second run replaces the program files and keeps `.env`; the database stays in the Docker volume.
+`--uninstall` runs `docker compose down` and keeps the files and the volume. `--uninstall --delete-data` also deletes the volume and
+the folder. `GITHUB_TOKEN` is for a private repository: the script then downloads the archive from the API. The raw URL of a
+private repository needs the token as well, so the one line works without a token only when the repository is public.
+`tests/test_get_script.py` tests it with a fake `curl` and a fake `docker`. The installation of Docker itself is not tested.
+
 **Start with the setup script**
 
 `sh install/docker-setup.sh` checks that Docker and the Compose plugin are there, asks for the meter address (an IP address is
