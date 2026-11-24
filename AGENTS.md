@@ -32,7 +32,7 @@ The program does not switch anything. The risk is a wrong or a missing alarm, or
 ## Stack and structure
 
 - Python 3 and **the standard library only**: `sqlite3`, `urllib.request`, `http.server`, `json`. No package to install. No web framework.
-- SQLite in WAL mode, one file. Two processes: `collector.py` writes, `api_server.py` reads. Run them as the systemd services in `install/`.
+- SQLite in WAL mode, one file. Two processes: `collector.py` writes, `api_server.py` reads. Run them as the systemd services in `install/`, or as the two Docker services in `docker-compose.yml`.
 - No JavaScript framework and no CSS framework. The pages are plain HTML, CSS and SVG, with no library.
 - Target: one Debian VM (1 vCPU, 1 GB RAM, 20 GB disk) with the program in `/opt/homewizard/`. A daily backup runs from a systemd timer.
 
@@ -54,6 +54,9 @@ pq_route.py                 # Optional Flask blueprint. Not used by the program.
 api_server.py               # The web and API server: pages, /stats, /history, /power-quality, /health
 ui.html                     # The statistics page
 .env.example                # Template for .env. Every setting, with its default
+Dockerfile                  # One image for both programs. Standard library only. Runs as a user that is not root
+docker-compose.yml          # The services collector and api, and the data volume. HW_METER_URL is required
+.dockerignore               # Keeps .env, databases, tests and docs out of the image
 tests/                      # The only test folder. unittest. One file per area (alarms, notify, collector, config, tariff, pq_data, api_server, install, repo_rules)
 install/
   install.sh                # The install or update on a Debian host: files, units, timer, restart
@@ -93,6 +96,7 @@ docs/ARCHITECTURE.md        # How the program is built and what it does: archite
 - **Alarms:** below the threshold, at the threshold, NEED in a row, reset by a normal sample, `None`, cooldown, and independent phases and directions.
 - **Data:** the schema, the kWh totals with and without `csv_import` rows, the `hours` limits and the bucket size.
 - **The rules in this file** are tests too: `tests/test_repo_rules.py` checks English only, no installation value in the files, standard library only, and that `config.py`, `.env.example` and `docs/ARCHITECTURE.md` list the same settings. Add a setting in all three.
+- **The Docker files** are checked by `tests/test_docker.py` (no secret, a non-root user, the data volume, `.env` out of the image). The workflow builds the image. Add every new `.py` file to the `COPY` line of the `Dockerfile`.
 - **The install scripts** are tested in a temporary folder (`tests/test_install.py`). They never touch `/opt` or systemd in a test.
 - **Time:** the clock is a `FakeClock`. Test day, week and month groups across both daylight saving changes. Never a real-time wait.
 - **A known gap is an `expectedFailure` test** with a docstring that points to "Known gaps" in `docs/ARCHITECTURE.md`. When you fix the gap, remove the decorator and the entry in the same pull request.

@@ -17,6 +17,7 @@ detail behind each rule. Write changes to this file by the rules in `.agents/wri
 - [Design tokens](#design-tokens)
 - [Configuration (.env)](#configuration-env)
 - [Operations](#operations)
+- [Run with Docker](#run-with-docker)
 - [Known gaps](#known-gaps)
 
 ## Architecture
@@ -356,6 +357,59 @@ When you edit a script on the host, keep one `.bak` copy for each file at most.
 | No Signal messages | `journalctl -u homewizard-collector.service \| grep -E 'SIGNAL\|CONFIG'` | No `[CONFIG] Signal is not set up` line. `[SIGNAL_MSG]` lines appear when a limit is crossed. No `[SIGNAL_ERR]` |
 | Two collectors | `ps aux \| grep collector.py` | One process, from the service |
 | Disk is full | `df -h / /var/backups/homewizard` and `ls -lh /opt/homewizard/homewizard.db*` | Free space. Old backups are deleted |
+
+## Run with Docker
+
+The repository has a `Dockerfile` and a `docker-compose.yml`. They run the same two programs without an install on the host.
+
+| Part | What it does |
+| --- | --- |
+| `Dockerfile` | One image (`python:3.12-slim`) for both programs. It holds only the program files and `tzdata`. The programs run as the user `hw` (uid 10001), not as root. |
+| `collector` service | Runs `collector.py`. |
+| `api` service | Runs `api_server.py` and publishes the web port. It has a health check on `/health`. |
+| `data` volume | Mounted at `/data` in both services. It holds `homewizard.db`. It stays when the containers are removed. |
+
+**Start**
+
+1. Install Docker with the Compose plugin.
+2. Copy `.env.example` to `.env` and set `HW_METER_URL`. This is the only required setting. Set the three `HW_SIGNAL_*` values for
+   Signal messages. Every other setting in this file works the same way.
+3. Run `docker compose up -d --build`.
+4. Open `http://<host>:8085/`. Read the log with `docker compose logs collector`. There must be no `[CONFIG]` line.
+
+Compose stops with an error message when `HW_METER_URL` is missing. It does not start with the example address.
+
+**What the compose file sets**
+
+- `HW_DB_PATH` (`/data/homewizard.db`), `HW_API_HOST` (`0.0.0.0`) and `HW_API_PORT` (8085) are fixed inside the container. A value
+  for them in `.env` has no effect.
+- `TZ` is `Europe/Stockholm` unless you set `TZ` in `.env` or in the shell. The statistics use this time zone.
+- `HW_WEB_PORT` (default 8085) is a Compose variable, not a program setting. It is the port on the host. Set it in `.env` to use
+  another port.
+- Both services use the same image.
+
+**Operations**
+
+| Task | Command |
+| --- | --- |
+| Status | `docker compose ps` |
+| Log | `docker compose logs -f collector` |
+| Update | Get the new files, then `docker compose up -d --build` |
+| Stop | `docker compose down`. The data stays. `docker compose down -v` also deletes the database. |
+| Backup | `docker compose exec collector python -c "import sqlite3; s=sqlite3.connect('/data/homewizard.db'); d=sqlite3.connect('/data/backup.db'); s.backup(d); print(d.execute('PRAGMA integrity_check').fetchone()[0])"`, then `docker compose cp collector:/data/backup.db .` |
+
+An update restarts the services, so the alarm counters start from zero. The GitHub workflow checks the compose file and builds the
+image, but it does not run the containers.
+
+**Move the data of a host install into Docker**
+
+1. Stop the host services: `systemctl stop homewizard-collector.service homewizard-api.service`.
+2. Run `docker compose up -d --no-start`, which creates the volume.
+3. Copy the database into it:
+   `docker run --rm -v homewizard-p1_data:/data -v /opt/homewizard:/old:ro homewizard-p1:local sh -c "cp /old/homewizard.db /data/ && chown hw:hw /data/homewizard.db"`
+   The volume name starts with the name of the folder of the repository. `docker volume ls` shows it. The `chown` runs as root,
+   so add `--user root` to the command if the user `hw` cannot do it.
+4. Run `docker compose up -d`. Do not run the host services and the containers at the same time.
 
 ## Known gaps
 

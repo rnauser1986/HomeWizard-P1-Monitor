@@ -24,6 +24,18 @@ systemctl restart homewizard-collector.service homewizard-api.service
 The script enables and restarts the services itself when `HW_METER_URL` is already changed. It never replaces an existing `.env`.
 Run it again for an update.
 
+## Run with Docker
+
+No install on the host. You need Docker with the Compose plugin.
+
+```sh
+cp .env.example .env     # set HW_METER_URL, and the HW_SIGNAL_* values for Signal
+docker compose up -d --build
+```
+
+Open `http://<host>:8085/`. The database is in the Docker volume `data` and stays when you update. See "Run with Docker" in
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#run-with-docker) for the backup, the update and how to move a host install.
+
 ## Move an older install
 
 An older install has the meter address and the Signal values inside `collector.py` and `notify_signal.py`. Run this first, then
@@ -55,6 +67,7 @@ The program has no sign-in. Use it on the home network only, or through a VPN. N
 | `api_server.py`, `ui.html` | The web and API server and the statistics page. |
 | `pq_data.py`, `pq_page.py`, `pq_route.py` | Power quality. `pq_route.py` is optional and needs Flask. |
 | `tariff_mod.py` | Price per kWh, fixed or spot price (`SE1` to `SE4`). |
+| `Dockerfile`, `docker-compose.yml` | The image and the two services for Docker. |
 | `install/` | The install script, the script that moves an older install, the systemd units and the backup script. |
 | `tests/` | The tests. |
 

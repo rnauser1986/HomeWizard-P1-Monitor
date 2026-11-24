@@ -1,0 +1,43 @@
+# Start with: docker compose up -d --build
+# Only HW_METER_URL is required. Put it in a file named .env next to this file (see .env.example).
+# Every other setting in .env.example works the same way. Never put .env in the repository.
+
+x-common: &common
+  build: .
+  image: homewizard-p1:local
+  restart: unless-stopped
+  env_file:
+    - path: .env
+      required: false
+  environment: &env
+    HW_METER_URL: ${HW_METER_URL:?Set HW_METER_URL in .env, for example HW_METER_URL=http://192.168.1.50/api/v1/data}
+    HW_DB_PATH: /data/homewizard.db
+    HW_API_HOST: 0.0.0.0
+    HW_API_PORT: "8085"
+    TZ: ${TZ:-Europe/Stockholm}
+  volumes:
+    - data:/data
+
+services:
+  collector:
+    <<: *common
+    command: ["python", "collector.py"]
+
+  api:
+    <<: *common
+    command: ["python", "api_server.py"]
+    depends_on:
+      - collector
+    # The program has no sign-in. Use it on the home network only. Never open this port to the internet.
+    ports:
+      - "${HW_WEB_PORT:-8085}:8085"
+    healthcheck:
+      # /health answers 503 when the newest measurement is older than HW_HEALTH_MAX_AGE_SEC.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8085/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  data:

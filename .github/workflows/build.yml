@@ -1,0 +1,36 @@
+name: Build & Test
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - name: Compile every module
+        run: python -m compileall -q .
+      - name: Run the tests
+        run: python -m unittest discover -s tests -t . -v
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the compose file
+        run: HW_METER_URL=http://192.168.1.50/api/v1/data docker compose config --quiet
+      - name: Build the image
+        run: docker build -t homewizard-p1:ci .
+      - name: Check that Python can import the modules in the image
+        run: docker run --rm homewizard-p1:ci python -c "import config, api_server, notify_signal, tariff_mod, pq_data, pq_page, alarm_stale"

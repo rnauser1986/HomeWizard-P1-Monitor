@@ -1,0 +1,15 @@
+# Installation-specific data and files the image does not need
+.env
+*.db
+*.db-wal
+*.db-shm
+*.bak*
+__pycache__/
+*.pyc
+.git/
+.github/
+.agents/
+.claude/
+docs/
+tests/
+install/

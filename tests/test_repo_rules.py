@@ -25,7 +25,7 @@ def code_files():
 def all_text_files(skip=()):
     files = code_files() + glob.glob(os.path.join(ROOT, "tests", "*.py"))
     files += glob.glob(os.path.join(ROOT, "install", "*")) + glob.glob(os.path.join(ROOT, "docs", "*.md"))
-    files += [os.path.join(ROOT, n) for n in (".env.example", "README.md", "AGENTS.md")]
+    files += [os.path.join(ROOT, n) for n in (".env.example", "README.md", "AGENTS.md", "Dockerfile", "docker-compose.yml", ".dockerignore")]
     return [f for f in files if os.path.isfile(f) and os.path.basename(f) not in skip]
 
 
