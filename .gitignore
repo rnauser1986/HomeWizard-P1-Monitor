@@ -1,0 +1,8 @@
+# Installation-specific data never goes in the repository
+.env
+*.db
+*.db-wal
+*.db-shm
+*.bak*
+__pycache__/
+*.pyc

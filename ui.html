@@ -1,0 +1,306 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>HomeWizard P1</title>
+<style>
+body{margin:0;font-family:sans-serif;background:#0b0f17;color:#e2e8f0}
+.w{max-width:1560px;width:95%;margin:20px auto;padding:0 16px}
+.g{display:grid;grid-template-columns:repeat(7,1fr);gap:10px;margin-bottom:16px}
+@media(max-width:950px){.g{grid-template-columns:repeat(3,1fr)}}@media(max-width:600px){.g{grid-template-columns:repeat(2,1fr)}}
+.c{background:#121826;border:1px solid #263042;border-radius:10px;padding:12px;cursor:pointer}
+.c.a{border-color:#a855f7;background:#1a132b}
+.l{font-size:12px;color:#94a3b8;text-transform:uppercase}
+.n{font-size:20px;font-weight:700;margin-top:4px}
+.s{font-size:12px;color:#94a3b8;margin-top:4px}
+.p{background:#090c12;border:1px solid #1e2636;border-radius:10px;padding:16px}
+.ph{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px}
+.ptot{font-size:15px;font-weight:700;color:#c084fc}
+svg{width:100%;height:310px;display:block}
+</style></head><body><div class="w">
+<h3>HomeWizard P1 – Statistics</h3>
+<div class="g">
+<div class="c a" data-p="now" onclick="sp('now')"><div class="l">Now</div><div class="n" id="v-now">-</div><div class="s" id="v-ph">L1 -/L2 -/L3 -</div></div>
+<div class="c" data-p="day" onclick="sp('day')"><div class="l">Day</div><div class="n" id="v-day">-</div><div class="s" id="s-day">-</div></div>
+<div class="c" data-p="week" onclick="sp('week')"><div class="l">Week</div><div class="n" id="v-week">-</div><div class="s" id="s-week">-</div></div>
+<div class="c" data-p="month" onclick="sp('month')"><div class="l">Month</div><div class="n" id="v-month">-</div><div class="s" id="s-month">-</div></div>
+<div class="c" data-p="year" onclick="sp('year')"><div class="l">Year</div><div class="n" id="v-year">-</div><div class="s" id="s-year">-</div></div>
+<div class="c" data-p="month_sek" onclick="sp('month_sek')"><div class="l">Month SEK</div><div class="n" id="v-month-sek">-</div><div class="s">Monthly cost</div></div>
+<div class="c" id="pq-top-card" onclick="window.location.href='/power-quality'"><div class="l">Power quality</div><div class="n" id="pq-top-sum" style="font-size:15px">-</div><div class="s" id="pq-top-sub">Voltage &amp; L3 peaks</div></div>
+</div>
+<div class="p">
+<div class="ph"><div id="ct" style="color:#cbd5e1">NOW (W)</div><div class="ptot" id="ptot"></div></div>
+<svg id="ch" viewBox="0 0 960 310"></svg>
+</div>
+<div class="p" id="v-panel" style="margin-top:12px">
+<div class="ph"><div id="vhdr" style="font-size:18px;font-weight:700"><span style="color:#e879f9">-</span> <span style="color:#c084fc">-</span> <span style="color:#38bdf8">-</span> <span style="color:#94a3b8;font-size:12px;font-weight:400">V</span></div><div class="ptot" style="color:#94a3b8">Voltage per phase (L1 / L2 / L3)</div></div>
+<svg id="ch-v" viewBox="0 0 960 210"></svg>
+</div>
+<div class="p" id="a-panel" style="margin-top:12px">
+<div class="ph"><div id="ahdr" style="font-size:18px;font-weight:700"><span style="color:#e879f9">-</span> <span style="color:#c084fc">-</span> <span style="color:#38bdf8">-</span> <span style="color:#94a3b8;font-size:12px;font-weight:400">A</span></div><div class="ptot" style="color:#94a3b8">Current per phase (L1 / L2 / L3)</div></div>
+<svg id="ch-a" viewBox="0 0 960 210"></svg>
+</div>
+</div>
+<script>
+let cur='now',wOff=0,dOff=0,mOff=0;
+function v(id,t){document.getElementById(id).textContent=t;}
+function el(tag,a,p){
+const n=document.createElementNS('http://www.w3.org/2000/svg',tag);
+for(const k in a)n.setAttribute(k,a[k]);
+if(p)p.appendChild(n);return n;
+}
+async function st(){
+const r=await fetch('/stats');
+const d=await r.json();
+v('v-now',d.now_w+' W');
+v('v-ph','L1 '+d.l1_w+'W/L2 '+d.l2_w+'W/L3 '+d.l3_w+'W');
+v('v-day',d.day_kwh+' kWh');v('s-day',d.day_sek+' SEK');
+v('v-week',d.week_kwh+' kWh');v('s-week',d.week_sek+' SEK');
+v('v-month',d.month_kwh+' kWh');v('s-month',d.month_sek+' SEK');
+v('v-year',d.year_kwh+' kWh');v('s-year',d.year_sek+' SEK');v('v-month-sek',d.month_sek+' SEK');
+}
+function drawArea(s,pts){
+const vbW=Math.max(960,Math.round(s.getBoundingClientRect().width)||960);
+s.setAttribute('viewBox','0 0 '+vbW+' 310');
+const pl=16,pr=56,pt=16,pb=32,w=vbW-pl-pr,h=310-pt-pb,by=pt+h;
+const mx=Math.max(...pts.map(x=>Number(x.val)||0),500);
+const stp=Math.ceil(mx/6/500)*500||500,top=stp*6;
+for(let i=0;i<=6;i++){
+const yv=i*stp,y=by-(yv/top)*h;
+el('line',{x1:pl,y1:y,x2:pl+w,y2:y,stroke:'#1f2937','stroke-width':1},s);
+el('text',{x:pl+w+8,y:y+3,fill:'#64748b','font-size':10},s).textContent=yv;
+}
+if(!pts.length){
+el('text',{x:pl+w/2,y:pt+h/2,'text-anchor':'middle',fill:'#94a3b8','font-size':14},s).textContent='No data';
+return;
+}
+function minOfDay(lbl){
+const m=String(lbl||'').match(/(\d{1,2}):(\d{2})/);
+if(!m)return null;
+return Math.min(1439,Math.max(0,parseInt(m[1],10)*60+parseInt(m[2],10)));
+}
+const isDay=(typeof cur!=='undefined'&&(cur==='day'||cur==='now'));
+const c=pts.map((p,i)=>{
+let xVal;
+if(isDay){
+const mins=minOfDay(p.label);
+const frac=mins!=null?(mins/1439):(pts.length===1?0:(i/(pts.length-1)));
+xVal=pl+frac*w;
+}else{
+xVal=pl+(pts.length===1?w/2:(i/(pts.length-1))*w);
+}
+return {x:xVal,y:by-(Math.max(0,Number(p.val)||0)/top)*h,p};
+});
+let dl='M '+c[0].x.toFixed(1)+' '+c[0].y.toFixed(1);
+for(let i=1;i<c.length;i++){
+const m=((c[i-1].x+c[i].x)/2).toFixed(1);
+dl+=' C '+m+' '+c[i-1].y.toFixed(1)+', '+m+' '+c[i].y.toFixed(1)+', '+c[i].x.toFixed(1)+' '+c[i].y.toFixed(1);
+}
+const da=dl+' L '+c[c.length-1].x.toFixed(1)+' '+by+' L '+c[0].x.toFixed(1)+' '+by+' Z';
+const defs=el('defs',{},s);
+const gr=el('linearGradient',{id:'pg',x1:'0',y1:'0',x2:'0',y2:'1'},defs);
+el('stop',{offset:'0%','stop-color':'#9333ea','stop-opacity':'0.55'},gr);
+el('stop',{offset:'100%','stop-color':'#581c87','stop-opacity':'0.15'},gr);
+el('path',{d:da,fill:'url(#pg)'},s);
+el('path',{d:dl,fill:'none',stroke:'#c084fc','stroke-width':2},s);
+if(isDay){
+const ticks=[0,360,720,1080,1439];
+const labels=['00:00','06:00','12:00','18:00','23:59'];
+for(let i=0;i<ticks.length;i++){
+const tx=pl+(ticks[i]/1439)*w;
+el('text',{x:tx,y:by+18,'text-anchor':'middle',fill:'#64748b','font-size':10},s).textContent=labels[i];
+}
+}else{
+const xt=Math.min(6,c.length);
+for(let i=0;i<xt;i++){
+const idx=Math.min(c.length-1,Math.round((i/Math.max(1,xt-1))*(c.length-1)));
+el('text',{x:c[idx].x,y:by+18,'text-anchor':'middle',fill:'#64748b','font-size':10},s).textContent=c[idx].p.label;
+}
+}
+const vl=el('line',{x1:0,y1:pt,x2:0,y2:by,stroke:'#94a3b8','stroke-width':1,opacity:0},s);
+const dt=el('circle',{cx:0,cy:0,r:4,fill:'#e879f9',opacity:0},s);
+const tg=el('g',{opacity:0},s);
+const tb=el('rect',{x:0,y:pt+4,width:130,height:36,rx:6,fill:'#111827',stroke:'#475569'},tg);
+const t1=el('text',{x:0,y:pt+18,'text-anchor':'middle',fill:'#e2e8f0','font-size':11,'font-weight':'700'},tg);
+const t2=el('text',{x:0,y:pt+32,'text-anchor':'middle',fill:'#c084fc','font-size':11},tg);
+el('rect',{x:pl,y:pt,width:w,height:h,fill:'transparent',style:'cursor:crosshair'},s)
+.addEventListener('mousemove',ev=>{
+const r=s.getBoundingClientRect(),sx=((ev.clientX-r.left)/r.width)*vbW;
+let b=c[0],bd=Math.abs(sx-b.x);
+for(const item of c){const d=Math.abs(sx-item.x);if(d<bd){bd=d;b=item;}}
+vl.setAttribute('x1',b.x);vl.setAttribute('x2',b.x);vl.setAttribute('opacity',1);
+dt.setAttribute('cx',b.x);dt.setAttribute('cy',b.y);dt.setAttribute('opacity',1);
+const tx=Math.min(960-pr-68,Math.max(pl+68,b.x));
+tb.setAttribute('x',tx-65);t1.setAttribute('x',tx);t2.setAttribute('x',tx);
+t1.textContent='Today '+b.p.label;t2.textContent='↓ '+b.p.val+' W';
+tg.setAttribute('opacity',1);
+});
+}
+function drawBars(s,pts){
+const vbW=Math.max(960,Math.round(s.getBoundingClientRect().width)||960);
+s.setAttribute('viewBox','0 0 '+vbW+' 310');
+if(!pts.length)return;
+const pl=14,pr=42,pt=28,pb=28,w=vbW-pl-pr,h=310-pt-pb,by=pt+h;
+const mx=Math.max(...pts.map(x=>Number(x.val)||0),10);
+const stp=Math.max(1,Math.ceil((mx*1.12)/16/5)*5),top=stp*16;
+for(let i=0;i<=16;i++){
+const yv=i*stp,y=by-(yv/top)*h;
+el('line',{x1:pl,y1:y,x2:pl+w,y2:y,stroke:'#1d2330','stroke-width':1},s);
+if(i%2===0){el('text',{x:pl+w+8,y:y+3,fill:'#64748b','font-size':10},s).textContent=yv;}
+}
+const defs=el('defs',{},s);
+const gr=el('linearGradient',{id:'wg',x1:'0',y1:'0',x2:'0',y2:'1'},defs);
+el('stop',{offset:'0%','stop-color':'#c084fc'},gr);
+el('stop',{offset:'100%','stop-color':'#581c87'},gr);
+const slot=w/pts.length,bw=Math.min(10,Math.max(6,slot*0.08));
+const cols=[];
+pts.forEach((ptx,i)=>{
+const val=Number(ptx.val)||0,bh=Math.max(0,Math.round((val/top)*h));
+const cx=pl+i*slot+slot/2,x=cx-bw/2,y=by-bh;
+if(val>0){
+el('rect',{x,y,width:bw,height:bh,rx:3,fill:'url(#wg)'},s);
+el('circle',{cx,cy:y,r:bw/2,fill:'#d8b4fe'},s);
+el('text',{x:cx,y:Math.max(pt+10,y-(bw/2)-6),'text-anchor':'middle',fill:'#f8fafc','font-size':11,'font-weight':'600','paint-order':'stroke',stroke:'#0b0e14','stroke-width':3,'stroke-linejoin':'round'},s).textContent=Math.round(val);
+}
+el('text',{x:cx,y:by+18,'text-anchor':'middle',fill:'#94a3b8','font-size':11},s).textContent=ptx.label;
+cols.push({cx,y:val>0?y:by,ptx});
+});
+const vl=el('line',{x1:0,y1:pt-8,x2:0,y2:by,stroke:'#94a3b8','stroke-width':1,opacity:0},s);
+const dt=el('circle',{cx:0,cy:0,r:4,fill:'#e879f9',opacity:0},s);
+const tg=el('g',{opacity:0},s);
+const t1=el('text',{x:0,y:12,'text-anchor':'middle',fill:'#e2e8f0','font-size':11,'font-weight':'700'},tg);
+const t2=el('text',{x:0,y:25,'text-anchor':'middle',fill:'#c084fc','font-size':11},tg);
+el('rect',{x:pl,y:0,width:w,height:310,fill:'transparent',style:'cursor:crosshair'},s)
+.addEventListener('mousemove',ev=>{
+const r=s.getBoundingClientRect(),sx=((ev.clientX-r.left)/r.width)*vbW;
+let b=cols[0],bd=Math.abs(sx-b.cx);
+for(const c of cols){const d=Math.abs(sx-c.cx);if(d<bd){bd=d;b=c;}}
+vl.setAttribute('x1',b.cx);vl.setAttribute('x2',b.cx);vl.setAttribute('opacity',1);
+dt.setAttribute('cx',b.cx);dt.setAttribute('cy',b.y);dt.setAttribute('opacity',b.ptx.val>0?1:0);
+const tx=Math.min(vbW-pr-55,Math.max(pl+55,b.cx));
+t1.setAttribute('x',tx);t2.setAttribute('x',tx);
+t1.textContent=(cur==='month'||cur==='month_sek')?(b.ptx.label+(d.year?' '+d.year:'')):(b.ptx.date_lbl||b.ptx.label);
+t2.textContent='↓ '+String(Number(b.ptx.val||0).toFixed(2)).replace('.',',')+' '+(window.__u||'kWh');
+tg.setAttribute('opacity',1);
+});
+}
+
+function drawMulti(elSvg, rows, keys, unit, hdrId, fMin, fMax){
+const vbW=Math.max(960,Math.round(elSvg.getBoundingClientRect().width)||960),vbH=210;
+elSvg.setAttribute('viewBox','0 0 '+vbW+' '+vbH);elSvg.innerHTML='';
+const pl=16,pr=56,pt=14,pb=26,w=vbW-pl-pr,h=vbH-pt-pb,by=pt+h,vals=[];
+for(const r of (rows||[]))for(const k of keys){const n=Number(r[k]);if(Number.isFinite(n))vals.push(n);}
+const rMin=vals.length?Math.min(...vals):fMin,rMax=vals.length?Math.max(...vals):fMax;
+const minV=Math.min(fMin,Math.floor(rMin/2)*2),maxV=Math.max(fMax,Math.ceil(rMax/2)*2),span=Math.max(1,maxV-minV);
+for(let i=0;i<=4;i++){const yv=minV+span*(i/4),y=by-((yv-minV)/span)*h;
+el('line',{x1:pl,y1:y,x2:pl+w,y2:y,stroke:'#1f2937','stroke-width':1},elSvg);
+el('text',{x:pl+w+8,y:y+3,fill:'#64748b','font-size':10},elSvg).textContent=Number(yv.toFixed(unit==='A'?1:0));}
+if(!rows||!rows.length){el('text',{x:pl+w/2,y:pt+h/2,'text-anchor':'middle',fill:'#94a3b8','font-size':13},elSvg).textContent='No data';return;}
+const cols=['#e879f9','#c084fc','#38bdf8'];
+keys.forEach((k,ki)=>{const pts=[];rows.forEach((r,i)=>{const n=Number(r[k]);if(!Number.isFinite(n))return;
+const x=rows.length===1?(pl+w/2):(pl+(i/(rows.length-1))*w),y=by-Math.max(0,Math.min(1,(n-minV)/span))*h;pts.push({x,y});});
+if(pts.length>1)el('path',{d:pts.map((pt0,idx)=>(idx===0?'M':'L')+pt0.x.toFixed(1)+','+pt0.y.toFixed(1)).join(' '),fill:'none',stroke:cols[ki],strokeWidth:1.8,'stroke-width':1.8},elSvg);});
+const last=rows[rows.length-1]||{},hEl=document.getElementById(hdrId);
+if(hEl){const f=keys.map(k=>last[k]!=null?Number(last[k]).toFixed(1):'-');
+hEl.innerHTML='<span style="color:#e879f9">'+f[0]+'</span> <span style="color:#c084fc">'+f[1]+'</span> <span style="color:#38bdf8">'+f[2]+'</span> <span style="color:#94a3b8;font-size:12px;font-weight:400">'+unit+'</span>';}
+const xt=Math.min(8,rows.length);
+for(let i=0;i<xt;i++){const idx=Math.min(rows.length-1,Math.round((i/Math.max(1,xt-1))*(rows.length-1)));
+const x=rows.length===1?(pl+w/2):(pl+(idx/(rows.length-1))*w);
+el('text',{x,y:by+16,'text-anchor':'middle',fill:'#64748b','font-size':10},elSvg).textContent=rows[idx].label||'';}
+const vl=el('line',{x1:0,y1:pt,x2:0,y2:by,stroke:'#94a3b8','stroke-width':1,opacity:0},elSvg);
+const dots=cols.map(col=>el('circle',{cx:0,cy:0,r:3.5,fill:col,opacity:0},elSvg));
+const tg=el('g',{opacity:0},elSvg);
+const tb=el('rect',{x:0,y:pt+4,width:176,height:48,rx:6,fill:'#111827',stroke:'#475569'},tg);
+const t1=el('text',{x:0,y:pt+18,'text-anchor':'middle',fill:'#e2e8f0','font-size':11,'font-weight':'700'},tg);
+const t2=el('text',{x:0,y:pt+33,'text-anchor':'middle','font-size':11},tg);
+const t3=el('text',{x:0,y:pt+46,'text-anchor':'middle',fill:'#94a3b8','font-size':10},tg);
+const hit=el('rect',{x:pl,y:pt,width:w,height:h,fill:'transparent',style:'cursor:crosshair'},elSvg);
+hit.addEventListener('mousemove',ev=>{
+const r=elSvg.getBoundingClientRect(),sx=((ev.clientX-r.left)/r.width)*vbW;
+let idx=0,bd=Infinity;
+for(let i=0;i<rows.length;i++){
+const px=rows.length===1?(pl+w/2):(pl+(i/(rows.length-1))*w);
+const d=Math.abs(sx-px);
+if(d<bd){bd=d;idx=i;}
+}
+const row=rows[idx]||{},px=rows.length===1?(pl+w/2):(pl+(idx/(rows.length-1))*w);
+vl.setAttribute('x1',px);vl.setAttribute('x2',px);vl.setAttribute('opacity',1);
+const fVals=keys.map(k=>{const n=Number(row[k]);return Number.isFinite(n)?n:null;});
+fVals.forEach((n,ki)=>{
+if(n!=null){
+const py=by-Math.max(0,Math.min(1,(n-minV)/span))*h;
+dots[ki].setAttribute('cx',px);dots[ki].setAttribute('cy',py);dots[ki].setAttribute('opacity',1);
+}else{
+dots[ki].setAttribute('opacity',0);
+}
+});
+const tx=Math.min(vbW-pr-92,Math.max(pl+92,px));
+tb.setAttribute('x',tx-88);t1.setAttribute('x',tx);t2.setAttribute('x',tx);t3.setAttribute('x',tx);
+t1.textContent=(row.date_lbl||row.label||'')+(unit?' · '+unit:'');
+const fmt=fVals.map(n=>n!=null?n.toFixed(1):'-');
+t2.innerHTML='<tspan fill="#e879f9">'+fmt[0]+'</tspan> <tspan fill="#94a3b8">/</tspan> <tspan fill="#c084fc">'+fmt[1]+'</tspan> <tspan fill="#94a3b8">/</tspan> <tspan fill="#38bdf8">'+fmt[2]+'</tspan>';
+t3.textContent='L1 / L2 / L3 ('+unit+')';
+tg.setAttribute('opacity',1);
+});
+hit.addEventListener('mouseleave',()=>{
+vl.setAttribute('opacity',0);
+dots.forEach(d=>d.setAttribute('opacity',0));
+tg.setAttribute('opacity',0);
+});
+}
+
+async function hi(){
+try{
+const isKr=(cur==='month_sek');
+const hp=isKr?'month':cur;
+const q=hp==='week'?('&offset='+wOff):(hp==='day'?('&offset='+dOff):(hp==='month'?('&offset='+mOff):''));
+const r=await fetch('/history?period='+hp+q);
+const d=await r.json();
+const ct=document.getElementById('ct');
+if(cur==='week'){
+const wlbl=d.week_label?(' · '+d.week_label):'';
+ct.innerHTML='WEEK ('+d.unit+')'+wlbl+' <button type="button" id="wprev" style="margin-left:8px;padding:1px 7px;background:#181c26;color:#e2e8f0;border:1px solid #2b3140;border-radius:6px;cursor:pointer"><</button> <button type="button" id="wnext" style="padding:1px 7px;background:#181c26;color:#e2e8f0;border:1px solid #2b3140;border-radius:6px;cursor:pointer">></button>';
+document.getElementById('wprev').onclick=()=>{wOff--;hi();};
+document.getElementById('wnext').onclick=()=>{wOff=Math.min(0,wOff+1);hi();};
+}else if(cur==='day'){
+const dlbl=d.date?(' · '+d.date):'';
+ct.innerHTML='DAY ('+d.unit+')'+dlbl+' <button type="button" id="dprev" style="margin-left:8px;padding:1px 7px;background:#181c26;color:#e2e8f0;border:1px solid #2b3140;border-radius:6px;cursor:pointer"><</button> <button type="button" id="dnext" style="padding:1px 7px;background:#181c26;color:#e2e8f0;border:1px solid #2b3140;border-radius:6px;cursor:pointer">></button>';
+document.getElementById('dprev').onclick=()=>{dOff--;hi();};
+document.getElementById('dnext').onclick=()=>{dOff=Math.min(0,dOff+1);hi();};
+}else if(hp==='month'){
+const mlbl=d.month_label?(' · '+d.month_label):'';
+ct.innerHTML='MONTH ('+d.unit+')'+mlbl+' <button type="button" id="mprev" style="margin-left:8px;padding:1px 7px;background:#181c26;color:#e2e8f0;border:1px solid #2b3140;border-radius:6px;cursor:pointer"><</button> <button type="button" id="mnext" style="padding:1px 7px;background:#181c26;color:#e2e8f0;border:1px solid #2b3140;border-radius:6px;cursor:pointer">></button>';
+document.getElementById('mprev').onclick=()=>{mOff--;hi();};
+document.getElementById('mnext').onclick=()=>{mOff=Math.min(0,mOff+1);hi();};
+}else{
+ct.textContent=cur.toUpperCase()+' ('+d.unit+')';
+}
+window.__u=isKr?'SEK':'kWh';
+v('ptot',d.total_kwh!=null?('↓ '+d.total_kwh+' ↑ 0.0 kWh · SEK '+d.total_sek):'');
+if((cur==='month'||isKr)&&d.total_sek!=null){v('v-month-sek',d.total_sek+' SEK');}
+const vp=document.getElementById('v-panel'),ap=document.getElementById('a-panel');
+if(isKr){if(vp)vp.style.display='none';if(ap)ap.style.display='none';const rate=(d.total_kwh&&d.total_sek!=null)?(Number(d.total_sek)/Number(d.total_kwh)):1.5;const pts=(d.points||[]).map(x=>({...x,val:Number(x.sek!=null?x.sek:(Number(x.val||0)*rate)),date_lbl:x.label+(d.year?' '+d.year:'')}));const el=document.getElementById('ch');el.innerHTML='';if(d.chart==='area')drawArea(el,pts);else drawBars(el,pts);return;}
+if(vp)vp.style.display='';if(ap)ap.style.display='';
+const s=document.getElementById('ch');s.innerHTML='';
+if(d.chart==='area')drawArea(s,d.points||[]);else drawBars(s,d.points||[]);drawMulti(document.getElementById('ch-v'),d.phases||[],['v1','v2','v3'],'V','vhdr',220,245);drawMulti(document.getElementById('ch-a'),d.phases||[],['a1','a2','a3'],'A','ahdr',0,25);
+}catch(e){console.error('hi error:',e);}
+}
+function sp(p){cur=p;document.querySelectorAll('.c').forEach(e=>e.classList.toggle('a',e.dataset.p===p));st();hi();}
+st();hi();setInterval(()=>{st();hi();},10000);window.addEventListener('resize',()=>hi());
+</script>
+<script>
+(async function(){
+  try{
+    const r = await fetch('/api/power-quality?hours=24');
+    const d = await r.json();
+    const s = d.summary || {};
+    const mins = [s.min_v1,s.min_v2,s.min_v3].filter(x => x != null && !isNaN(x));
+    const maxs = [s.max_v1,s.max_v2,s.max_v3].filter(x => x != null && !isNaN(x));
+    const minV = mins.length ? Math.min(...mins).toFixed(1) : '-';
+    const maxV = maxs.length ? Math.max(...maxs).toFixed(1) : '-';
+    const maxA3 = (s.max_a3 != null && !isNaN(s.max_a3)) ? Number(s.max_a3).toFixed(1) : '-';
+    document.getElementById('pq-top-sum').textContent = minV + '–' + maxV + ' V';
+    document.getElementById('pq-top-sub').textContent = 'Max L3: ' + maxA3 + ' A (24h)';
+  }catch(e){}
+})();
+</script>
+
+</body></html>
