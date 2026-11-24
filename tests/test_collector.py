@@ -1,7 +1,11 @@
 import json
-import sqlite3
-import tempfile
 import os
+import signal
+import sqlite3
+import subprocess
+import sys
+import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -163,6 +167,61 @@ class MainLoopTests(unittest.TestCase):
     def test_the_loop_sleeps_for_the_poll_interval(self):
         sleeps = self.run_loop([None], passes=1)
         self.assertEqual(sleeps, [self.mod.POLL_INTERVAL_SEC])
+
+
+class ShutdownTests(unittest.TestCase):
+    """The collector closes its database connection when it stops."""
+
+    def setUp(self):
+        self.mod = fresh("collector")
+
+    def run_main(self, sleep_error):
+        conn = mock.MagicMock()
+        with mock.patch.object(self.mod, "init_db", return_value=conn), \
+             mock.patch.object(self.mod, "warn_if_not_set_up"), \
+             mock.patch.object(self.mod, "poll_once"), \
+             mock.patch.object(self.mod.time, "sleep", side_effect=sleep_error):
+            with self.assertRaises(BaseException):
+                self.mod.main()
+        return conn
+
+    def test_it_closes_on_ctrl_c(self):
+        self.run_main(KeyboardInterrupt()).close.assert_called_once()
+
+    def test_it_closes_on_a_normal_exit(self):
+        self.run_main(SystemExit(0)).close.assert_called_once()
+
+    def test_it_closes_on_an_unexpected_error(self):
+        self.run_main(MemoryError()).close.assert_called_once()
+
+    def test_the_stop_handler_is_a_normal_exit(self):
+        with self.assertRaises(SystemExit) as raised:
+            self.mod._stop(signal.SIGTERM, None)
+        self.assertEqual(raised.exception.code, 0)
+
+    def test_init_db_closes_the_connection_when_the_setup_fails(self):
+        connection = mock.MagicMock()
+        with mock.patch.object(self.mod.sqlite3, "connect", return_value=connection), \
+             mock.patch.object(self.mod, "_create_schema", side_effect=sqlite3.OperationalError("locked")):
+            with self.assertRaises(sqlite3.OperationalError):
+                self.mod.init_db("x.db")
+        connection.close.assert_called_once()
+
+    @unittest.skipIf(os.name == "nt", "SIGTERM works differently on Windows")
+    def test_the_real_program_stops_cleanly_on_sigterm(self):
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        env = {**os.environ, "HW_DB_PATH": os.path.join(tempfile.mkdtemp(prefix="hw-test-"), "t.db"),
+               "HW_METER_URL": "http://127.0.0.1:9/api/v1/data", "HW_POLL_INTERVAL_SEC": "1"}
+        proc = subprocess.Popen([sys.executable, "collector.py"], cwd=root, env=env,
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        try:
+            time.sleep(1.5)
+            proc.send_signal(signal.SIGTERM)
+            self.assertEqual(proc.wait(timeout=10), 0)
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+            proc.stdout.close()
 
 
 class StartWarningTests(unittest.TestCase):

@@ -1,5 +1,7 @@
 import json
+import signal
 import sqlite3
+import sys
 import time
 import urllib.request
 from datetime import datetime, timezone
@@ -22,7 +24,17 @@ from config import (
 
 
 def init_db(db_path):
+    """Open the database and create the tables. The caller closes the connection."""
     c = sqlite3.connect(db_path, timeout=5.0)
+    try:
+        _create_schema(c)
+    except BaseException:
+        c.close()
+        raise
+    return c
+
+
+def _create_schema(c):
     c.execute("PRAGMA journal_mode=WAL;")
     c.execute("PRAGMA busy_timeout=5000;")
     c.execute("""
@@ -74,7 +86,6 @@ def init_db(db_path):
     )
     """)
     c.commit()
-    return c
 
 
 def warn_if_not_set_up():
@@ -130,18 +141,28 @@ def poll_once(conn):
     check_stale(DB_PATH)
 
 
+def _stop(signum, frame):
+    """Turn SIGTERM into a normal exit, so that main() closes the database."""
+    sys.exit(0)
+
+
 def main():
     conn = init_db(DB_PATH)
-    warn_if_not_set_up()
-    while True:
-        try:
-            poll_once(conn)
-        except Exception as e:
-            print(f"[POLL_ERR] {e}", flush=True)
-            check_stale(DB_PATH)
+    try:
+        warn_if_not_set_up()
+        while True:
+            try:
+                poll_once(conn)
+            except Exception as e:
+                print(f"[POLL_ERR] {e}", flush=True)
+                check_stale(DB_PATH)
 
-        time.sleep(POLL_INTERVAL_SEC)
+            time.sleep(POLL_INTERVAL_SEC)
+    finally:
+        conn.close()
 
 
 if __name__ == "__main__":
+    # systemd and Docker stop a program with SIGTERM. Python does not run `finally` for it by default.
+    signal.signal(signal.SIGTERM, _stop)
     main()

@@ -100,6 +100,9 @@ sqlite3 /opt/homewizard/homewizard.db \
 
 - **A failed poll never stops the collector.** The loop catches every exception, prints `[POLL_ERR] ...`, runs `check_stale` and
   tries again after the sleep.
+- **The collector closes the database when it stops.** It keeps one connection for its whole life. `main()` closes it in `finally`,
+  and a `SIGTERM` handler (the signal that systemd and Docker send) turns the stop into a normal exit, so `finally` runs. Without the
+  handler, Python ends at once on `SIGTERM`, and in a container the stop waits 10 seconds and then kills the program.
 - At the start the collector prints a `[CONFIG]` line when Signal is not set up, and one when `HW_METER_URL` is still the example
   address. A silent alarm is worse than a loud one.
 - An exception in an alarm module ends that loop pass in the same way. Keep alarm modules free of exceptions.
