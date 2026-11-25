@@ -17,9 +17,26 @@ ReadWritePaths=/opt/homewizard
 ProtectHome=yes
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
+ProtectKernelLogs=yes
 ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+PrivateDevices=yes
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
 LockPersonality=yes
+SystemCallArchitectures=native
+# The programs need no capability: the web port is above 1024 and the files belong to the user of the service.
+CapabilityBoundingSet=
+# Only the system calls that ordinary services use.
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+# New files (the database and its WAL files) are readable by the owner only.
+UMask=0077
 
 [Install]
 WantedBy=multi-user.target

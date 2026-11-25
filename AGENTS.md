@@ -84,7 +84,7 @@ pyproject.toml              # Settings for ruff, the linter. Not a Python packag
 Dockerfile                  # One image for both programs. Standard library only. Runs as a user that is not root
 docker-compose.yml          # The services collector and api, and the data volume. HW_METER_URL is required
 .dockerignore               # Keeps .env, databases, tests and docs out of the image
-tests/                      # The only test folder. unittest. One file per area (alarms, notify, collector, config, tariff, pq_data, api_server, install, docker, repo_rules)
+tests/                      # The only test folder. unittest. One file per area (alarms, notify, collector, config, tariff, pq_data, api_server, install, backup_script, systemd_units, docker, repo_rules)
   e2e/                      # The check of the Docker package: run.sh, a fake meter and a compose override
 install/
   install.sh                # The install or update on a Debian host: files, units, timer, restart

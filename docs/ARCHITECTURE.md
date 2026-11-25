@@ -482,6 +482,50 @@ root only. Run a backup by hand: `systemctl start homewizard-db-backup.service`.
 
 When you edit a script on the host, keep one `.bak` copy for each file at most.
 
+**Limit who can reach the page**
+
+The server has no sign-in and listens on all interfaces. The simplest limit is a firewall rule for port 8085, on the host or in
+your router. This is an example for a Debian host with `nftables`. Replace the two networks with the ones that may open the page.
+Nothing of this is installed by `install.sh`, because the networks belong to one installation.
+
+```sh
+apt-get install -y nftables
+mkdir -p /etc/nftables.d
+cat > /etc/nftables.d/homewizard.nft <<'EOF'
+table inet hw_filter
+delete table inet hw_filter
+table inet hw_filter {
+  chain input {
+    type filter hook input priority 10; policy accept;
+    iif lo accept
+    tcp dport 8085 ip saddr { 192.168.10.0/24, 172.16.5.0/24 } counter accept
+    tcp dport 8085 counter drop
+  }
+}
+EOF
+export PATH=$PATH:/usr/sbin:/sbin
+nft -c -f /etc/nftables.d/homewizard.nft && nft -f /etc/nftables.d/homewizard.nft
+```
+
+The rule is active at once and lasts until the next restart. It touches only port 8085, so SSH and everything else stay as they
+are. Open the page from a computer in one of the networks. It must load, and the `accept` counter in
+`nft list table inet hw_filter` must go up. To see the `drop` work, leave one of the networks out for a minute and reload the page
+from a computer in it: the page must time out and the `drop` counter must go up. Then load the rules at every start:
+
+```sh
+grep -q nftables.d /etc/nftables.conf || echo 'include "/etc/nftables.d/*.nft"' >> /etc/nftables.conf
+systemctl enable --now nftables
+```
+
+`/usr/sbin` is not in the path of every root shell, so `nft: command not found` can mean only that. The rule limits who comes in.
+With Docker the published port passes Docker's own rules and not this chain. Limit it with an address in the `ports:` line of the
+compose file (for example `"192.168.10.5:8085:8085"`), or in the router.
+
+The services also limit themselves. The unit files in `install/` take away what the programs do not use: all capabilities, the
+system calls outside `@system-service`, other address families than IP and Unix sockets, the home folders, the devices and more.
+`systemd-analyze security homewizard-api.service` rates the result. If a unit fails to start after a change of the unit file, run
+`journalctl -u homewizard-api.service -n 30 --no-pager` and loosen only the line that the error names.
+
 **Troubleshooting**
 
 | Symptom | Check | Healthy result |
@@ -610,6 +654,7 @@ request. Where a test can show the gap, it is an `expectedFailure` test until th
 6. **A page request can wait for the price service.** In `dynamic` mode, `effective_rate` calls `elprisetjustnu.se` (two calls with a
    timeout of 6 s) when a spot price is missing, at most once in `HW_TARIFF_SYNC_COOLDOWN` seconds.
 7. **The server has no sign-in** and listens on all interfaces by default. See Architecture.
+   "Limit who can reach the page" in Operations has a firewall rule.
 8. **Some SQL text is put together from fixed pieces.** `m_kwh` and `calc_standby_from_w` in `api_server.py` take the `WHERE` text
    as an argument, and `pq_data.py` puts the fixed text `DV_EXPR` and the bucket expression into its queries. The callers pass fixed
    text from the code, and every value goes in as a `?` parameter. A caller must never pass text from a request.
