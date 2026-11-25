@@ -93,7 +93,7 @@ install/
   homewizard-api.service
   homewizard-db-backup.service
   homewizard-db-backup.timer
-  backup-homewizard-db.sh   # Copy and check the database, archive the source, delete old backups
+  backup-homewizard-db.sh   # Copy, check and gzip the database, archive the source, delete old backups
 docs/ARCHITECTURE.md        # How the program is built and what it does: architecture, data, rules, pages, operations
 .github/workflows/build.yml # Build & Test: compile, test, lint, build the image and run it against a fake meter (pull requests, merges to main, by hand)
 .github/pull_request_template.md # What every pull request description has

@@ -464,8 +464,16 @@ What is different from the older install:
 
 1. Copy the database with the SQLite `.backup` command. This is safe while the collector writes.
 2. Run `PRAGMA integrity_check;` on the copy. If the result is not `ok`, stop with an error. No old backup is deleted.
-3. Archive the program folder, with `.env` and without the database, `*.bak*` and `__pycache__`.
-4. Delete backups older than 7 days.
+3. Compress the copy with `gzip` (`homewizard_<stamp>.db.gz`). The database is mostly repeated JSON, so the copy gets about
+   8 times smaller (76 MB became 9.5 MB on the live database). Without this, 14 daily copies of a growing database would fill
+   the disk.
+4. Archive the program folder, with `.env` and without the database, `*.bak*` and `__pycache__`.
+5. Delete backups older than 7 days (the `.db` and the `.db.gz` form).
+
+To check a backup without touching the live database: `gunzip -c homewizard_<stamp>.db.gz > /tmp/restore.db`, then
+`sqlite3 /tmp/restore.db "PRAGMA integrity_check; SELECT COUNT(*) FROM measurements;"`, then delete `/tmp/restore.db`. To restore, stop
+both services, put the unpacked file in place of `homewizard.db`, delete `homewizard.db-wal` and `homewizard.db-shm`, and start
+the services.
 
 The files have the mode 600. The archive holds `.env`, which holds the Signal numbers. Keep `/var/backups/homewizard` readable by
 root only. Run a backup by hand: `systemctl start homewizard-db-backup.service`.
