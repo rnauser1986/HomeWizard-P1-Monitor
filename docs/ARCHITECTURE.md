@@ -37,7 +37,7 @@ other.
 
 1. `config.py` reads `.env` and the environment. Every other module imports its settings from `config.py`.
 2. `collector.py` sends an HTTP GET to the meter (Local API v1, JSON) every `HW_POLL_INTERVAL_SEC` seconds.
-3. The collector writes the reading to `measurements`, then calls the alarm modules.
+3. The collector writes the reading to `measurements`, updates the minute row of the reading in `measurements_minute`, then calls the alarm modules.
 4. The alarm modules send messages through `notify_signal.py` (Signal, optional) and write tagged lines to standard output.
 5. `api_server.py` answers page and JSON requests from the database. `tariff_mod.py` gives the price per kWh.
 6. `pq_data.py` and `pq_page.py` give the power quality numbers and page.
@@ -64,10 +64,13 @@ fast local storage. WAL does not work well on a network mount.
 | `historical_kwh` | `period_type` (`day`, `week`, `month`, `year`), `period_key`, `kwh` | Energy from before the live polling started. The web server adds it to the live totals. |
 | `tariff_config` | `id` (always 1), `start_date`, `mode` (`fixed`, `dynamic`), `interval_min` (15, 60), `area`, `fixed_sek`, `add_sek`, `vat_pct` | The price settings. An empty table means the defaults from `.env`. |
 | `spot_prices` | `slot_key` (`YYYY-MM-DD HH:MM`), `sek_per_kwh` | A cache of the spot prices from `elprisetjustnu.se`. |
+| `measurements_minute` | `minute_utc` (`YYYY-MM-DDTHH:MM:00`), `n`, the lowest and highest voltage and the highest current of each phase, the highest power and spread between phases with the time of each, the sums and counts for the average voltages, and the counts of samples over each limit | One row for each minute, made from `measurements`. The power quality page reads it. See Power quality. |
+| `measurements_minute_meta` | `key`, `value` | The power and spread limits the counts in `measurements_minute` were made for. |
 
 **Rules**
 
 - **The program never changes or deletes a measurement.** Each poll adds one row. `raw_json` holds the full answer of the meter.
+  The one exception is the format of an old `ts_utc`, described below. `measurements_minute` is made from the measurements and can be built again at any time.
 - Every column of `measurements` except `ts_utc` and `raw_json` can be NULL. The meter leaves out fields it does not have.
 - `ts_utc` is a UTC time in ISO 8601 text, for example `2026-11-24T06:11:14.123456+00:00`. The pages show local time. SQLite
   converts with `'localtime'`, so the host must have the right time zone.
@@ -116,8 +119,13 @@ sqlite3 /opt/homewizard/homewizard.db \
 
 1. Read the meter URL. The timeout is `HW_METER_TIMEOUT_SEC` (6 s).
 2. Add the reading to `measurements` with a UTC time stamp and the full answer in `raw_json`.
-3. Call `check_spike`, `check_imbalance`, `check_phase_amp`, `check_voltage` and `check_stale`.
-4. Sleep `HW_POLL_INTERVAL_SEC` seconds.
+3. Make the row of that minute in `measurements_minute` again from the samples of the minute (a few rows). An error here is logged
+   as `[MINUTE]` and never stops the collector or the alarms: the page then counts from the samples.
+4. Call `check_spike`, `check_imbalance`, `check_phase_amp`, `check_voltage` and `check_stale`.
+5. Sleep `HW_POLL_INTERVAL_SEC` seconds.
+
+At the start, before the loop, `sync_minutes` makes the minute table and fills it from `measurements` when it is empty, behind the
+samples or made for other limits. With 100 000 samples this takes about a second.
 
 **Rules**
 
@@ -236,6 +244,21 @@ The answer holds:
 - `events`: up to 1000 anomaly rows, newest first.
 
 The cut-off of the window is written as `YYYY-MM-DDTHH:MM:SS` text, the same format as `ts_utc`.
+
+**The minute table.** Counting six times over every sample of a month is slow (1 to 2 s for 30 days of samples every 10 s), and it
+grows with the data. So the page reads `measurements_minute`: one row for each minute with the extremes, the sums for the averages
+and the counts over each limit. 30 days are 43 200 rows, a sixth of the samples at one every 10 s (in the test 0.16 s against 1.0 s, and 0.04 s against 0.41 s for 7 days),
+and it does not grow when the poll interval gets shorter. The page asks the table when `minutes_ready` says it is in order (it exists, it was made for the limits in
+use and it has the minute of the newest sample). Otherwise it counts from the samples, as `compute_from_rows` does, so a missing or
+old table never gives a wrong answer. The two ways must give the same answer, and `MinuteTableTests` compares them for six windows.
+
+- The events keep their exact time. The table only says which minutes hold one, and those minutes are looked up in `measurements`.
+- The window starts at a whole minute (the minute that holds the cut-off) where the samples version starts at the second.
+- An average voltage in a point of 5 minutes or more can differ by 0.1 V from the samples version when the true average lies exactly
+  between two rounded values (about one value in 12 000 in the test). The sums are added in another order. Everything else is equal.
+- The minute rows are not deleted when the samples are. The statistics stay if the samples are cut one day.
+- A change to the limits `HW_PQ_POWER_PEAK_W` or `HW_PQ_DV_WARN_V` makes the collector count again at its next start. Until then
+  the page counts from the samples.
 The limits 215 V, 245 V and 20 A in `pq_data.py` are fixed in the code. They do not follow the `HW_ALARM_*` settings.
 
 ## Pages

@@ -73,7 +73,7 @@ alarm_stale.py              # Alarm: no new measurement in the database
 alarm_voltage.py            # Alarm: phase voltage too low or too high
 notify_signal.py            # send_signal(): log the message, send it through signal-cli-rest-api if set up
 tariff_mod.py               # Price per kWh: fixed, or spot price from elprisetjustnu.se
-pq_data.py                  # Power quality numbers, buckets and anomaly list, with a short cache
+pq_data.py                  # Power quality numbers, buckets and anomaly list, with a short cache. Also the minute table (measurements_minute) the page reads
 pq_page.py                  # The power quality page (PQ_HTML)
 pq_route.py                 # Optional Flask blueprint. Not used by the program. Needs Flask.
 api_server.py               # The web and API server: pages, /stats, /history, /power-quality, /health
@@ -176,6 +176,7 @@ docs/ARCHITECTURE.md        # How the program is built and what it does: archite
 - Time: store UTC. New and changed code takes the clock as a parameter. Never use `datetime.now()` without a time zone.
 - SQL: every value from a request or from the meter goes in a `?` placeholder. Never build SQL from request text.
 - A period (a day, week, month or year) is a range on `ts_utc`: use `RANGE` and `day_bounds()` in `api_server.py`. Never filter it with a function on `ts_utc`, such as `date(ts_utc,'localtime')=...`. SQLite cannot use the index then, and the query reads the whole table. A new query on a period needs a test that compares it with the old expression, also on the days that summer time changes.
+- `pq_data.py` counts in two ways that must give the same answer: `compute_from_rows` (from the samples, the reference and the fallback) and `compute_from_minutes` (from `measurements_minute`). A change to one needs the same change in the other and a test in `MinuteTableTests`. The collector must never stop because of the minute table: a failure is logged and the page counts from the samples.
 - An index is created with `CREATE INDEX IF NOT EXISTS` in `init_db`, so that an existing database gets it. Say in `docs/ARCHITECTURE.md` what the index is for.
 - Input: bound every input from a request (`hours` 1 to `HW_PQ_MAX_HOURS`, `offset` a whole number) and answer a bad value with a default or a 400, never with a crash.
 - Log to standard output with a tag in square brackets, for example `[START]`, `[STALE]`, `[HTTP]` or `[SIGNAL_ERR]`. The systemd journal and Docker keep it. Never log a phone number, the Signal URL or the address of the meter. Never send the text of an exception to a client.

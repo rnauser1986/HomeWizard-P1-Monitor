@@ -11,6 +11,7 @@ from alarm_phase_amp import check_phase_amp
 from alarm_spike import check_spike
 from alarm_stale import check_stale
 from alarm_voltage import check_voltage
+from pq_data import sync_minutes, update_minute
 from config import (
     DB_PATH,
     EXAMPLE_METER_URL,
@@ -29,6 +30,7 @@ def init_db(db_path):
     try:
         _create_schema(c)
         normalize_timestamps(c)
+        build_minutes(c)
     except BaseException:
         c.close()
         raise
@@ -89,6 +91,20 @@ def _create_schema(c):
     )
     """)
     c.commit()
+
+
+def build_minutes(c):
+    """Make the minute table for the power quality page and fill it when it is behind. A failure only costs the speed of the
+    page, which then counts from the samples, so it never stops the collector."""
+    try:
+        n = sync_minutes(c)
+    except Exception as exc:
+        c.rollback()
+        print(f"[START] collector: the minute table could not be made, the page counts from the samples: {exc}", flush=True)
+        return 0
+    if n:
+        print(f"[START] collector: made the minute table from {n} samples", flush=True)
+    return n
 
 
 def normalize_timestamps(c):
@@ -155,6 +171,11 @@ def poll_once(conn):
         ),
     )
     conn.commit()
+    try:
+        update_minute(conn, ts_utc)
+    except Exception as exc:
+        conn.rollback()
+        print(f"[MINUTE] could not update the minute table: {exc}", flush=True)
     amps = (data.get("active_current_l1_a"), data.get("active_current_l2_a"), data.get("active_current_l3_a"))
     volts = (data.get("active_voltage_l1_v"), data.get("active_voltage_l2_v"), data.get("active_voltage_l3_v"))
     check_spike(*amps)

@@ -122,6 +122,44 @@ class NormalizeTimestampsTests(unittest.TestCase):
         self.assertEqual(n, 4)
 
 
+class MinuteTableStartTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = fresh("collector")
+        self.path = os.path.join(tempfile.mkdtemp(prefix="hw-test-"), "t.db")
+
+    def test_the_minute_table_is_made_and_filled_at_the_start(self):
+        conn = self.mod.init_db(self.path)
+        conn.execute("INSERT INTO measurements (ts_utc, active_power_w, raw_json) VALUES ('2026-01-01T10:00:05+00:00', 5.0, '{}')")
+        conn.execute("INSERT INTO measurements (ts_utc, active_power_w, raw_json) VALUES ('2026-01-01T10:00:15+00:00', 7.0, '{}')")
+        conn.commit()
+        conn.close()
+        conn = self.mod.init_db(self.path)
+        try:
+            self.assertEqual(conn.execute("SELECT minute_utc, n, max_w FROM measurements_minute").fetchall(),
+                             [("2026-01-01T10:00:00", 2, 7.0)])
+        finally:
+            conn.close()
+
+    def test_a_table_that_cannot_be_made_does_not_stop_the_start(self):
+        with mock.patch.object(self.mod, "sync_minutes", side_effect=sqlite3.OperationalError("no such function: ROW_NUMBER")), \
+                mock.patch("builtins.print") as printed:
+            conn = self.mod.init_db(self.path)
+        try:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM measurements").fetchone()[0], 0)
+        finally:
+            conn.close()
+        self.assertTrue(any("minute table" in str(c.args[0]) for c in printed.call_args_list))
+
+    def test_the_start_line_says_how_many_samples_it_made_the_table_from(self):
+        conn = self.mod.init_db(self.path)
+        conn.execute("INSERT INTO measurements (ts_utc, raw_json) VALUES ('2026-01-01T10:00:05+00:00', '{}')")
+        conn.commit()
+        conn.close()
+        with mock.patch("builtins.print") as printed:
+            self.mod.init_db(self.path).close()
+        self.assertTrue(any("from 1 samples" in str(c.args[0]) for c in printed.call_args_list))
+
+
 class PollOnceTests(unittest.TestCase):
     def setUp(self):
         self.mod = fresh("collector")
@@ -152,6 +190,35 @@ class PollOnceTests(unittest.TestCase):
         self.assertEqual(row["total_power_import_kwh"], 1000.5)
         self.assertEqual(json.loads(row["raw_json"]), METER_ANSWER)
         self.assertTrue(row["ts_utc"].endswith("+00:00"))
+
+    def minute_rows(self):
+        return self.conn.execute("SELECT minute_utc, n, max_w, max_v1 FROM measurements_minute").fetchall()
+
+    def test_the_minute_of_the_reading_is_updated(self):
+        self.poll()
+        self.poll()
+        rows = self.minute_rows()
+        self.assertEqual(sum(r[1] for r in rows), 2)  # one row, or two when the test runs across a minute change
+        self.assertEqual({r[2] for r in rows}, {1234.0})
+        self.assertEqual({r[3] for r in rows}, {231.0})
+
+    def test_a_failing_minute_update_does_not_stop_the_reading_or_the_alarms(self):
+        with mock.patch.object(self.mod, "update_minute", side_effect=sqlite3.OperationalError("disk full")):
+            self.poll()
+        self.assertEqual(self.row()["active_power_w"], 1234.0)
+        self.alarms["check_stale"].assert_called_once()
+
+    def test_a_failing_minute_update_is_logged_with_its_tag(self):
+        with mock.patch.object(self.mod, "update_minute", side_effect=sqlite3.OperationalError("disk full")), \
+                mock.patch("builtins.print") as printed:
+            self.poll()
+        self.assertTrue(any("[MINUTE]" in str(c.args[0]) and "disk full" in str(c.args[0]) for c in printed.call_args_list))
+
+    def test_the_next_reading_still_works_after_a_failed_minute_update(self):
+        with mock.patch.object(self.mod, "update_minute", side_effect=sqlite3.OperationalError("locked")):
+            self.poll()
+        self.poll()
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM measurements").fetchone()[0], 2)
 
     def test_the_meter_is_read_with_the_timeout_from_the_settings(self):
         urlopen = self.poll()

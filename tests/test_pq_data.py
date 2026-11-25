@@ -1,5 +1,7 @@
+import random
 import sqlite3
 import unittest
+from datetime import datetime, timezone
 from unittest import mock
 
 from tests.helpers import fresh, make_db, timedelta, utc_now
@@ -211,6 +213,238 @@ class VoltageSpreadTests(unittest.TestCase):
         result = self.mod.get_power_quality(path, 24)
         self.assertEqual(result["aggregates"]["high_dv_cnt"], 1)
         self.assertEqual(len(result["events"]), 1)
+
+
+AT = "2026-06-15T12:00:00"
+AT_DT = datetime(2026, 6, 15, 12, 0, 0, tzinfo=timezone.utc)
+
+
+def knotty_rows(hours=48, seed=7):
+    """One sample every 10 s, with the cases that are hard: a missing phase, one voltage alone, equal highest values at two
+    times, currents and voltages over the limits, voltages with one decimal (so averages land on a rounding edge)."""
+    rnd = random.Random(seed)
+    rows = []
+    t = AT_DT - timedelta(hours=hours) + timedelta(seconds=3)
+    while t < AT_DT:
+        row = {"ts": t, "w": float(rnd.choice([300, 800, 1500, 9500, 9500, 11000])),
+               "v1": round(rnd.uniform(212, 248), 1), "v2": round(rnd.uniform(222, 240), 1),
+               "v3": round(rnd.uniform(224, 238), 1),
+               "a1": round(rnd.uniform(0, 21), 1), "a2": round(rnd.uniform(0, 9), 1), "a3": round(rnd.uniform(0, 9), 1)}
+        roll = rnd.random()
+        if roll < 0.03:
+            row["v2"] = None
+        elif roll < 0.05:
+            row["v2"] = row["v3"] = None
+        elif roll < 0.06:
+            row["v1"] = row["v2"] = row["v3"] = None
+        elif roll < 0.07:
+            row["w"] = None
+        rows.append(row)
+        t += timedelta(seconds=10)
+    return rows
+
+
+class MinuteTableTests(unittest.TestCase):
+    """The minute table must give the same answer as the samples. compute_from_rows is the reference."""
+
+    def setUp(self):
+        self.mod = fresh("pq_data")
+
+    def db(self, rows):
+        path = make_db(rows)
+        conn = sqlite3.connect(path)
+        self.mod.sync_minutes(conn)
+        self.addCleanup(conn.close)
+        return path, conn
+
+    def assertSame(self, conn, hours, volt_tolerance=0.0):
+        """The answers are the same. Only an average voltage in a bucket of 5 minutes or more may differ, by 0.1 V at most:
+        the sums are added in another order, so an average that lies exactly between two rounded values can round the other way."""
+        rows = self.mod.compute_from_rows(conn, hours, AT)
+        minutes = self.mod.compute_from_minutes(conn, hours, AT)
+        msg = f"the answers differ for {hours} h"
+        self.assertEqual({k: v for k, v in minutes.items() if k != "series"}, {k: v for k, v in rows.items() if k != "series"}, msg)
+        self.assertEqual(len(minutes["series"]), len(rows["series"]), msg)
+        for got, want in zip(minutes["series"], rows["series"], strict=True):
+            for key in want:
+                if key in ("v1", "v2", "v3") and volt_tolerance and want[key] is not None and got[key] is not None:
+                    self.assertLessEqual(abs(got[key] - want[key]), volt_tolerance + 1e-9, msg)
+                else:
+                    self.assertEqual(got[key], want[key], f"{msg}, {key} at {want['bucket_utc']}")
+        return rows
+
+    def test_every_window_gives_the_same_answer(self):
+        _, conn = self.db(knotty_rows())
+        for hours in (1, 6, 24):
+            with self.subTest(hours=hours):
+                result = self.assertSame(conn, hours)
+                self.assertGreater(result["aggregates"]["samples_cnt"], 0)
+
+    def test_longer_windows_give_the_same_answer_but_for_the_rounding_of_an_average_voltage(self):
+        _, conn = self.db(knotty_rows())
+        for hours in (72, 168, 720):
+            with self.subTest(hours=hours):
+                result = self.assertSame(conn, hours, volt_tolerance=0.1)
+                self.assertGreater(result["aggregates"]["samples_cnt"], 0)
+
+    def test_the_knotty_data_really_has_something_in_each_part(self):
+        _, conn = self.db(knotty_rows())
+        result = self.mod.compute_from_rows(conn, 24, AT)
+        self.assertGreater(result["aggregates"]["low_v_cnt"], 0)
+        self.assertGreater(result["aggregates"]["high_v_cnt"], 0)
+        self.assertGreater(result["aggregates"]["high_a_cnt"], 0)
+        self.assertGreater(result["aggregates"]["high_w_cnt"], 0)
+        self.assertGreater(result["aggregates"]["high_dv_cnt"], 0)
+        self.assertEqual(len(result["events"]), 1000)
+
+    def test_the_thousand_event_limit_cuts_at_the_same_place(self):
+        rows = [{"ts": AT_DT - timedelta(seconds=10 * i + 3), "w": 12000.0, "v1": 230.0, "v2": 230.0, "v3": 230.0}
+                for i in reversed(range(1500))]
+        _, conn = self.db(rows)
+        result = self.assertSame(conn, 24)
+        self.assertEqual(len(result["events"]), 1000)
+
+    def test_equal_highest_values_give_the_latest_time(self):
+        rows = [
+            {"ts": AT_DT - timedelta(hours=3), "w": 5000.0, "v1": 230.0, "v2": 238.0, "v3": 230.0},
+            {"ts": AT_DT - timedelta(hours=2), "w": 5000.0, "v1": 230.0, "v2": 238.0, "v3": 230.0},
+            {"ts": AT_DT - timedelta(hours=1), "w": 100.0, "v1": 230.0, "v2": 231.0, "v3": 230.0},
+        ]
+        _, conn = self.db(rows)
+        result = self.assertSame(conn, 24)
+        self.assertEqual(result["summary"]["max_w_ts"], rows[1]["ts"].isoformat())
+        self.assertEqual(result["summary"]["max_dv_ts"], rows[1]["ts"].isoformat())
+
+    def test_a_window_with_no_samples_gives_the_same_empty_answer(self):
+        _, conn = self.db([{"ts": AT_DT - timedelta(hours=100), "w": 1.0, "v1": 230.0}])
+        result = self.assertSame(conn, 24)
+        self.assertEqual(result["aggregates"]["samples_cnt"], 0)
+        self.assertEqual(result["series"], [])
+
+    def test_voltage_without_a_spread_gives_the_time_of_the_latest_sample_with_a_voltage(self):
+        rows = [{"ts": AT_DT - timedelta(hours=2), "w": 1.0, "v1": 230.0},
+                {"ts": AT_DT - timedelta(hours=1), "w": 1.0, "v1": 231.0}]
+        _, conn = self.db(rows)
+        result = self.assertSame(conn, 24)
+        self.assertIsNone(result["summary"]["max_dv"])
+        self.assertEqual(result["summary"]["max_dv_ts"], rows[1]["ts"].isoformat())
+
+    def test_the_window_starts_at_a_whole_minute(self):
+        """The one planned difference: the rows version cuts at the second, the minute table at the minute."""
+        row = {"ts": datetime(2026, 6, 15, 11, 0, 10, tzinfo=timezone.utc), "w": 1.0, "v1": 230.0}
+        _, conn = self.db([row])
+        at = "2026-06-15T12:00:30"
+        self.assertEqual(self.mod.compute_from_rows(conn, 1, at)["aggregates"]["samples_cnt"], 0)
+        self.assertEqual(self.mod.compute_from_minutes(conn, 1, at)["aggregates"]["samples_cnt"], 1)
+
+    def test_updating_one_minute_at_a_time_gives_the_same_table_as_building_it_at_once(self):
+        rows = knotty_rows(hours=2)
+        path = make_db()
+        step = sqlite3.connect(path)
+        for r in rows:
+            step.execute("INSERT INTO measurements (ts_utc, active_power_w, active_voltage_l1_v, active_voltage_l2_v,"
+                         " active_voltage_l3_v, active_current_l1_a, active_current_l2_a, active_current_l3_a, raw_json)"
+                         " VALUES (?,?,?,?,?,?,?,?, '{}')",
+                         (r["ts"].isoformat(), r["w"], r["v1"], r["v2"], r["v3"], r["a1"], r["a2"], r["a3"]))
+            self.mod.update_minute(step, r["ts"].isoformat())
+        one_by_one = step.execute(f"SELECT * FROM {self.mod.MINUTE_TABLE} ORDER BY minute_utc").fetchall()
+        step.execute(f"DELETE FROM {self.mod.MINUTE_TABLE}")
+        step.commit()
+        self.mod.sync_minutes(step)
+        at_once = step.execute(f"SELECT * FROM {self.mod.MINUTE_TABLE} ORDER BY minute_utc").fetchall()
+        step.close()
+        self.assertEqual(one_by_one, at_once)
+        self.assertGreater(len(at_once), 100)
+
+    def test_sync_fills_an_empty_table_and_leaves_a_table_in_order_alone(self):
+        path = make_db([{"ts": AT_DT - timedelta(minutes=m), "w": 1.0, "v1": 230.0} for m in range(5)])
+        conn = sqlite3.connect(path)
+        self.addCleanup(conn.close)
+        self.assertEqual(self.mod.sync_minutes(conn), 5)
+        self.assertEqual(self.mod.sync_minutes(conn), 0)
+
+    def test_sync_catches_up_with_samples_that_came_without_an_update(self):
+        _, conn = self.db([{"ts": AT_DT - timedelta(minutes=10), "w": 1.0, "v1": 230.0}])
+        conn.execute("INSERT INTO measurements (ts_utc, raw_json) VALUES (?, '{}')", ((AT_DT - timedelta(minutes=5)).isoformat(),))
+        conn.commit()
+        self.assertGreater(self.mod.sync_minutes(conn), 0)
+        self.assertEqual(conn.execute(f"SELECT SUM(n) FROM {self.mod.MINUTE_TABLE}").fetchone()[0], 2)
+
+    def test_sync_builds_the_table_again_when_the_limits_change(self):
+        _, conn = self.db([{"ts": AT_DT - timedelta(minutes=5), "w": 9000.0}])
+        self.assertEqual(conn.execute(f"SELECT high_w_n FROM {self.mod.MINUTE_TABLE}").fetchone()[0], 0)
+        with mock.patch.object(self.mod, "POWER_PEAK_W", 8000.0):
+            self.assertEqual(self.mod.sync_minutes(conn), 1)
+            self.assertEqual(conn.execute(f"SELECT high_w_n FROM {self.mod.MINUTE_TABLE}").fetchone()[0], 1)
+
+    def test_minute_rows_older_than_the_oldest_sample_are_kept(self):
+        _, conn = self.db([{"ts": AT_DT - timedelta(minutes=5), "w": 1.0}])
+        conn.execute(f"INSERT INTO {self.mod.MINUTE_TABLE} (minute_utc, n) VALUES ('2025-01-01T00:00:00', 6)")
+        conn.commit()
+        self.mod.sync_minutes(conn)
+        self.assertEqual(conn.execute(f"SELECT COUNT(*) FROM {self.mod.MINUTE_TABLE} WHERE minute_utc < '2026'").fetchone()[0], 1)
+
+
+class MinuteTableUseTests(unittest.TestCase):
+    """When the page reads the minute table, and when it counts from the samples as before."""
+
+    def setUp(self):
+        self.mod = fresh("pq_data")
+
+    def recent(self):
+        return make_db([{"ts": utc_now() - timedelta(minutes=m), "w": 700.0, "v1": 231.0, "v2": 232.0, "v3": 233.0,
+                         "a1": 1.0, "a2": 1.0, "a3": 1.0} for m in range(3)])
+
+    def synced(self):
+        path = self.recent()
+        conn = sqlite3.connect(path)
+        self.mod.sync_minutes(conn)
+        conn.close()
+        self.mod._CACHE.clear()
+        return path
+
+    def test_the_page_reads_the_minute_table_when_it_is_ready(self):
+        path = self.synced()
+        with mock.patch.object(self.mod, "compute_from_rows", side_effect=AssertionError("read the samples")):
+            self.assertEqual(self.mod.get_power_quality(path, 24)["aggregates"]["samples_cnt"], 3)
+            self.mod._CACHE.clear()
+            self.assertEqual(self.mod.get_power_quality_summary(path, 24)["summary"]["max_v3"], 233.0)
+
+    def test_the_page_counts_from_the_samples_when_the_table_is_not_made(self):
+        path = self.recent()
+        conn = sqlite3.connect(path)
+        conn.execute(f"DROP TABLE {self.mod.MINUTE_TABLE}")
+        conn.execute(f"DROP TABLE {self.mod.META_TABLE}")
+        conn.commit()
+        conn.close()
+        with mock.patch.object(self.mod, "compute_from_minutes", side_effect=AssertionError("read the minute table")):
+            self.assertEqual(self.mod.get_power_quality(path, 24)["aggregates"]["samples_cnt"], 3)
+            self.mod._CACHE.clear()
+            self.assertEqual(self.mod.get_power_quality_summary(path, 24)["summary"]["max_v3"], 233.0)
+
+    def test_the_page_counts_from_the_samples_when_the_table_is_behind(self):
+        """An old collector adds samples and never the minute rows. The page must not show the old numbers."""
+        path = self.synced()
+        conn = sqlite3.connect(path)
+        conn.execute("INSERT INTO measurements (ts_utc, active_voltage_l1_v, raw_json) VALUES (?, 250.0, '{}')",
+                     ((utc_now() + timedelta(minutes=2)).isoformat(),))
+        conn.commit()
+        conn.close()
+        self.assertEqual(self.mod.get_power_quality(path, 24)["aggregates"]["samples_cnt"], 4)
+        self.mod._CACHE.clear()
+        self.assertEqual(self.mod.get_power_quality_summary(path, 24)["summary"]["max_v1"], 250.0)
+
+    def test_the_page_counts_from_the_samples_when_the_limits_are_not_the_ones_the_table_was_made_for(self):
+        path = self.synced()
+        with mock.patch.object(self.mod, "POWER_PEAK_W", 650.0), \
+                mock.patch.object(self.mod, "compute_from_minutes", side_effect=AssertionError("read the minute table")):
+            self.assertEqual(self.mod.get_power_quality(path, 24)["aggregates"]["high_w_cnt"], 3)
+
+    def test_an_empty_database_gives_an_empty_answer(self):
+        path = make_db()
+        result = self.mod.get_power_quality(path, 24)
+        self.assertEqual(result["aggregates"]["samples_cnt"], 0)
+        self.assertEqual(result["events"], [])
 
 
 if __name__ == "__main__":
