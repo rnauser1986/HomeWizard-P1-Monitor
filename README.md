@@ -40,8 +40,9 @@ You need:
      meter, and a **USB-C power supply**, because this kind of port gives no power. HomeWizard says that orders from
      homewizard.se since 9 January 2024 include a free HAN converter that works with both port types. The power supply is not in the
      box for meters with an RJ45 HAN port, and neither for Kamstrup meters in Sweden. Buy one if you need it.
-   - **Some grid operators must switch on the port first.** HomeWizard writes that some meters may need the network operator
-     to enable the HAN port. Ask yours if the meter gives no data.
+   - **The port has to be switched on.** On some meters the port is off until it is enabled. Some grid operators let you do it
+     yourself, for example in their own app or on their website. Others have to enable it for you. Ask yours how it works if the
+     meter gives no data.
    - **Other countries:** HomeWizard lists the Netherlands, Belgium, Luxembourg, Denmark, Hungary, Sweden, Finland, Austria, Norway,
      Lithuania and Switzerland, with different rules for each. In Denmark and Norway a HAN port needs the converter.
 
