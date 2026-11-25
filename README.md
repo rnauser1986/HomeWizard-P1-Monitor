@@ -123,3 +123,7 @@ The GitHub workflow also runs the linter (`ruff check .`) and starts the Docker 
 
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md): how the program is built, every setting, the backup and the known gaps.
 - [`AGENTS.md`](AGENTS.md): the rules for a change, for people and for agents.
+
+## License
+
+MIT. Free for everyone to use, change and share, see [`LICENSE`](LICENSE). The software comes without any warranty.
