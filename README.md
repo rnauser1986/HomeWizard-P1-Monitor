@@ -25,7 +25,29 @@ the current of each phase below it.
 The power quality page (`/power-quality`). It shows the voltage range and the current peaks of each phase over the chosen
 window. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#pages) for every card and chart.
 
+## Before you start
+
+You need:
+
+1. **A HomeWizard P1 meter**, plugged into the P1 port of your smart electricity meter and connected to your Wi-Fi.
+2. **The Local API turned on.** HomeWizard's help article says: open the HomeWizard Energy app, go to **Settings > Meters**, choose
+   the meter and turn on **Local API** ([HomeWizard help article](https://helpdesk.homewizard.com/articles/5935977)). The menus
+   can change between versions of the app. If you do not find it, search the help pages for "Local API". This program uses
+   version 1 of the API, which needs no login and no key.
+3. **The address of the meter.** Look in the list of devices in your router. Give the meter a fixed address (an address
+   reservation in the router), so that it does not change. Then check it: open `http://<meter-address>/api/v1/data` in a
+   browser. A page of numbers inside curly brackets (JSON) means that the meter answers.
+4. **A computer that is always on, on the same network:** a Raspberry Pi, a small PC or a virtual machine. The target is one
+   processor core, 1 GB of memory and a 20 GB disk. The database grows by about 3 GB a year (see "Data model" in
+   [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#data-model-sqlite)), so plan the disk for that.
+5. **Optional: Signal messages** for the alarms (see "Signal messages" below). Without Signal the alarms go to the log only.
+
 ## Install
+
+There are two ways to install it, and both run the same program with the same settings. **Docker** is the shortest way: one line, and
+you update by running the line again. It works on a Raspberry Pi (64-bit), Ubuntu and Debian. The **host install** runs the two
+programs directly as systemd services on a Debian machine. Use it when you already have a Debian host and want no Docker.
+Pick one of them.
 
 On a Debian host, as root, from the unpacked repository:
 
@@ -93,7 +115,47 @@ See "Move an older install to this layout" in [`docs/ARCHITECTURE.md`](docs/ARCH
 - Open `http://<host>:8085/power-quality` for the power quality.
 - Open `http://<host>:8085/health`. The answer `{"ok": true, "status": "ok", ...}` means new measurements arrive.
 
-The program has no sign-in. Use it on the home network only, or through a VPN. Never open a port to the internet.
+The program has no sign-in. Use it on the home network only, or through a VPN. Never open a port to the internet. To limit
+which computers on your network can open the page, see "Limit who can reach the page" in
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#operations).
+
+**If nothing shows,** open the table "Troubleshooting" in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#operations). It lists
+what to check for no new measurements, a page that does not open, no Signal messages, two collectors and a full disk.
+
+**Backups.** On a host install a timer copies the database every night at 05:30 to `/var/backups/homewizard`, as a compressed
+file, and keeps 7 days. Docker has its own command. See "Backup" in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#operations) for
+how to change the number of days, how to check a backup and how to restore one.
+
+
+## Signal messages (optional)
+
+The alarms always write a line to the log. To get them as a Signal message on your phone as well, the program talks to
+**signal-cli-rest-api**, a separate open source program that you run yourself, next to this one. It is linked to a Signal
+number and sends the messages for you. Follow its own documentation to start it and to link or register the number. This
+repository does not install it.
+
+When it runs, set three values in `.env` (the third is the number that receives the messages):
+
+```sh
+HW_SIGNAL_URL=http://<signal-host>:8080
+HW_SIGNAL_FROM=<the number that sends, in international format>
+HW_SIGNAL_TO=<the number that receives, in international format>
+```
+
+Then restart the collector (host install: `systemctl restart homewizard-collector.service`, Docker: `docker compose up -d`).
+The log must not hold the line `[CONFIG] Signal is not set up`. The program never writes the numbers or the address to the log.
+
+To test the messages without waiting for a real alarm, you can try the service by hand. The program sends the same request
+(`POST <HW_SIGNAL_URL>/v2/send` with a JSON body):
+
+```sh
+curl -X POST -H "Content-Type: application/json" \
+  -d '{"message": "test", "number": "<sender>", "recipients": ["<receiver>"]}' http://<signal-host>:8080/v2/send
+```
+
+To test the alarm itself, set `HW_ALARM_PHASE_LIMIT_A=1` in `.env`, restart the collector and wait half a minute: any load on a
+phase then crosses the limit and a message is sent. Set the value back (the default is 20) and restart again. The alarms are
+explained in "Alarms" in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#alarms).
 
 ## Electricity price
 

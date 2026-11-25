@@ -147,6 +147,22 @@ a heat pump compressor.
 | `alarm_spike.py` `check_spike(l1, l2, l3)` | The highest phase current is at least `HW_ALARM_SPIKE_LIMIT_A` (22 A) for 3 samples in a row | Signal and log `[SPIKE]` | 1200 s |
 | `alarm_stale.py` `check_stale(db_path)` | The newest `ts_utc` is older than `HW_ALARM_STALE_SEC` (300 s) | Signal and log `[STALE]`. When data returns: Signal and log `[STALE_OK]` | 1200 s |
 
+**What the alarms tell you.** The numbers below are the defaults. Set them for your house (see Configuration): the current limits
+should lie under the size of your main fuse.
+
+| Alarm | In plain words | What to do |
+| --- | --- | --- |
+| `[PHASE_AMP]` | One phase carries 20 A or more for 30 seconds. It is getting close to what a fuse allows. | Switch off something large on that phase (an oven, a car charger, a heater) before the fuse trips. |
+| `[SPIKE]` | One phase carries 22 A or more for 30 seconds. This limit is a little higher than the one of `[PHASE_AMP]`, so a big load often sends both. | The same as for `[PHASE_AMP]`: switch off something large. |
+| `[IMBALANCE]` | One phase carries at least 12 A more than another, for a minute. A big single-phase load causes it. | Not a fault in itself. Moving a load to another phase evens it out. |
+| `[VOLTAGE_LOW]`, `[VOLTAGE_HIGH]` | The voltage of a phase is below 215 V or above 245 V for 30 seconds. The normal level is about 230 V. | A single short dip is normal. If it repeats, tell the grid company or an electrician. |
+| `[STALE]`, `[STALE_OK]` | No new measurement for 5 minutes, and then the message that data is back. | Check the meter (power, Wi-Fi) and `systemctl status homewizard-collector.service`. |
+
+"For 30 seconds" is three samples in a row, because the program reads the meter every 10 seconds (`HW_POLL_INTERVAL_SEC`). One
+sample below the limit sets the count back to zero, so a short surge does not send a message. After a message the same alarm
+stays quiet for its cooldown (20 or 30 minutes by default), so a long overload sends one message and not hundreds. Every alarm
+also writes a tagged line to the log, so you can read what happened in `journalctl` even when Signal is off.
+
 `notify_signal.py` `send_signal(msg)` always prints `[SIGNAL_MSG] ...`. It sends an HTTP POST (JSON) to
 `<HW_SIGNAL_URL>/v2/send` only when `HW_SIGNAL_URL`, `HW_SIGNAL_FROM` and `HW_SIGNAL_TO` are all set. The timeout is
 `HW_SIGNAL_TIMEOUT` (4 s). It does not send the same text twice inside `HW_SIGNAL_COOLDOWN` (30 s), and it forgets older texts so
@@ -366,6 +382,23 @@ The screenshots below come from a live install. They were taken from an earlier 
 the voltage and current charts, the monthly cost, the window buttons and the table. The card names (NOW, DAY, WEEK, MONTH, YEAR)
 and the layout are the same as in this repository.
 
+### Words that the pages use
+
+| Word | What it is |
+| --- | --- |
+| **Phase (L1, L2, L3)** | Most Swedish houses have a three-phase supply: three separate live wires. The program shows each of them, because the load is seldom equal. |
+| **Voltage (V)** | The electrical "pressure" of a phase. The normal level is about 230 V. The program warns below 215 V and above 245 V (settings `HW_ALARM_VOLTAGE_LOW_V` and `_HIGH_V`). |
+| **Current (A)** | How much electricity flows in a phase. A fuse trips when it is too high for too long, so the limit (20 A by default) should lie under your main fuse. |
+| **Power (W, kW)** | Voltage times current: how much the house uses right now. **Peak power** is the highest value in the window. |
+| **Energy (kWh)** | Power over time: what you pay for. The statistics take it from the energy counter of the meter. |
+| **Voltage spread, ΔV** | The difference between the highest and the lowest phase voltage at the same moment. A large spread can come from a very uneven load, or from a fault in the neutral conductor. If it stays high, ask an electrician. |
+| **Phase balance** | The highest phase current minus the lowest. A big number means that one phase does most of the work. |
+| **Standby load** | The power that is always on, with everything else off (the fridge, the router, devices on standby). The program takes the 15th percentile of the power values of the period. |
+| **Sample** | One reading of the meter, every 10 seconds by default. |
+| **Window and bucket** | The window is the period that the chart shows (6 hours to 1 month). A bucket is one point of the chart: one minute for a short window, up to one hour for a month. The program takes the average voltage and the highest current and power of a bucket, so a peak does not disappear. |
+| **Anomaly (event)** | A sample that crossed a limit: a voltage outside the normal range, a high current, a large ΔV or a power peak. The table "Anomalies & peaks" lists the newest ones. |
+| **Surge** | A short peak of current, for example when a motor or a compressor starts. It is normal when it is short and rare. The alarms need several samples in a row, so a surge does not send a message. |
+
 ### Statistics (`/`, `ui.html`)
 
 The page refreshes `/stats` and `/history` every 10 seconds. The cards at the top are buttons. Each card shows one total and,
@@ -565,7 +598,7 @@ What is different from the older install:
    8 times smaller (76 MB became 9.5 MB on the live database). Without this, 14 daily copies of a growing database would fill
    the disk.
 4. Archive the program folder, with `.env` and without the database, `*.bak*` and `__pycache__`.
-5. Delete backups older than 7 days (the `.db` and the `.db.gz` form).
+5. Delete backups older than `HW_BACKUP_RETENTION_DAYS` days, 7 by default (the `.db` and the `.db.gz` form).
 
 To check a backup without touching the live database: `gunzip -c homewizard_<stamp>.db.gz > /tmp/restore.db`, then
 `sqlite3 /tmp/restore.db "PRAGMA integrity_check; SELECT COUNT(*) FROM measurements;"`, then delete `/tmp/restore.db`. To restore, stop
@@ -574,6 +607,18 @@ the services.
 
 The files have the mode 600. The archive holds `.env`, which holds the Signal numbers. Keep `/var/backups/homewizard` readable by
 root only. Run a backup by hand: `systemctl start homewizard-db-backup.service`.
+
+**Change the number of days or the folder.** The script reads `HW_BACKUP_RETENTION_DAYS` (7 by default) and `HW_BACKUP_DIR`
+(`/var/backups/homewizard`) from its environment. For the timer, set them in the unit with `systemctl edit
+homewizard-db-backup.service`, and write in the file that opens:
+
+```ini
+[Service]
+Environment=HW_BACKUP_RETENTION_DAYS=14
+```
+
+A compressed copy is about an eighth of the database, so seven copies take about as much space as the database itself. Look at
+`du -sh /var/backups/homewizard` now and then, and at `df -h /`: the backups grow with the database.
 
 When you edit a script on the host, keep one `.bak` copy for each file at most.
 
