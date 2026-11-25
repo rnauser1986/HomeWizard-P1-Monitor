@@ -63,7 +63,7 @@ fast local storage. WAL does not work well on a network mount.
 | `measurements` | `id`, `ts_utc`, `wifi_strength`, `active_power_w`, `active_power_l1_w` to `l3_w`, `active_voltage_l1_v` to `l3_v`, `active_current_a`, `active_current_l1_a` to `l3_a`, `total_power_import_kwh`, `total_power_export_kwh`, `raw_json` | One row for each poll. Index `idx_measurements_ts` on `ts_utc` and `idx_measurements_power` on `active_power_w`. |
 | `historical_kwh` | `period_type` (`day`, `week`, `month`, `year`), `period_key`, `kwh` | Energy from before the live polling started. The web server adds it to the live totals. |
 | `tariff_config` | `id` (always 1), `start_date`, `mode` (`fixed`, `dynamic`), `interval_min` (15, 60), `area`, `fixed_sek`, `add_sek`, `vat_pct` | The price settings. An empty table means the defaults from `.env`. |
-| `spot_prices` | `slot_key` (`YYYY-MM-DD HH:MM`), `sek_per_kwh` | A cache of the spot prices from `elprisetjustnu.se`. |
+| `spot_prices` | `slot_key` (`YYYY-MM-DD HH:MM`), `sek_per_kwh` | A cache of the spot prices (`elprisetjustnu.se` for the Swedish zones). See [Price and tariff](#price-and-tariff). |
 | `measurements_minute` | `minute_utc` (`YYYY-MM-DDTHH:MM:00`), `n`, the lowest and highest voltage and the highest current of each phase, the highest power and spread between phases with the time of each, the sums and counts for the average voltages, and the counts of samples over each limit | One row for each minute, made from `measurements`. The power quality page reads it. See Power quality. |
 | `measurements_minute_meta` | `key`, `value` | The power and spread limits the counts in `measurements_minute` were made for. |
 
@@ -105,13 +105,7 @@ fast local storage. WAL does not work well on a network mount.
   hours. For day and now, one point is one minute. For week, month and year, one row is one poll, so the hours are the number of
   rows times `HW_POLL_INTERVAL_SEC` divided by 3600.
 
-To switch to spot prices, write row 1 of `tariff_config`:
-
-```sh
-sqlite3 /opt/homewizard/homewizard.db \
-  "INSERT OR REPLACE INTO tariff_config (id, start_date, mode, interval_min, area, fixed_sek, add_sek, vat_pct) \
-   VALUES (1, '2026-11-01', 'dynamic', 60, 'SE3', 1.50, 0.08, 25.0);"
-```
+The price settings and how to change them are in [Price and tariff](#price-and-tariff).
 
 ## Collector
 
@@ -173,18 +167,119 @@ its memory stays small. It catches every exception and prints `[SIGNAL_ERR] ...`
 
 ## Price and tariff
 
-`tariff_mod.py` gives the price in SEK per kWh with `effective_rate(cur, db_path)`.
+The pages show a cost in SEK next to the energy. The cost is the energy of the period times a price per kWh. `tariff_mod.py`
+gives that price with `effective_rate(cur, db_path)`. There are two modes:
 
-- Before `HW_TARIFF_START_DATE`, or when `mode` is `fixed`, the price is `HW_DEFAULT_FIXED_SEK`.
-- With `mode` set to `dynamic`, the module reads the price of the current slot (60 or 15 minutes) from `spot_prices`. It takes the
-  newest price at or before the slot. A price older than `HW_TARIFF_MAX_SLOT_AGE_HOURS` (36 h) does not count.
+| Mode | The price per kWh |
+| --- | --- |
+| `fixed` (the default) | The same all the time: `fixed_sek`. Use it for a contract with a fixed price, or when you do not want spot prices. |
+| `dynamic` | The spot price (the market price) of the current hour or quarter of an hour. Use it for a contract that follows the market. |
+
+Both modes add a surcharge and VAT: the price is `(base + add_sek) * (1 + vat_pct / 100)`. In `fixed` mode `base` is `fixed_sek`.
+For example, `fixed_sek` 1.50, `add_sek` 0.08 and `vat_pct` 25 give 1.975 SEK per kWh. In `dynamic` mode a spot price of 0.50 with
+the same surcharge and VAT gives 0.725.
+
+**The settings** are row 1 of the table `tariff_config`. Without that row the program uses the defaults below, which means mode
+`fixed`. Only some of the settings can be set in `.env`. The others are written to the table.
+
+| Column | `.env` default | Meaning |
+| --- | --- | --- |
+| `mode` | | `fixed` or `dynamic`. Without a row: `fixed`. |
+| `fixed_sek` | `HW_DEFAULT_FIXED_SEK` (1.5) | The fixed price per kWh, before surcharge and VAT. It is also the price when a spot price is missing. |
+| `add_sek` | | A surcharge per kWh before VAT, for example the margin of the supplier. Without a row: 0. |
+| `vat_pct` | | VAT in percent. Without a row: 25. |
+| `start_date` | `HW_TARIFF_START_DATE` (2026-11-01) | The days before this date always use the fixed price, also in `dynamic` mode. |
+| `area` | `HW_PRICE_AREA` (SE3) | The zone that the program asks the price service for. `SE1` to `SE4` for the service below. |
+| `interval_min` | | 60 or 15: the length of the slot that the program looks up. Without a row: 60. |
+
+**Switch mode.** The server reads the row on every request, so there is no need to restart. On a host install:
+
+```sh
+sqlite3 /opt/homewizard/homewizard.db \
+  "INSERT OR REPLACE INTO tariff_config (id, start_date, mode, interval_min, area, fixed_sek, add_sek, vat_pct) \
+   VALUES (1, '2026-11-01', 'dynamic', 60, 'SE3', 1.50, 0.08, 25.0);"
+```
+
+With Docker the image has no `sqlite3` program, so use Python in the collector container:
+
+```sh
+docker compose exec -T collector python - <<'EOF'
+import sqlite3
+c = sqlite3.connect("/data/homewizard.db")
+c.execute("INSERT OR REPLACE INTO tariff_config (id, start_date, mode, interval_min, area, fixed_sek, add_sek, vat_pct) "
+          "VALUES (1, '2026-11-01', 'dynamic', 60, 'SE3', 1.50, 0.08, 25.0)")
+c.commit()
+EOF
+```
+
+To go back to the fixed price, write `'fixed'` in the same statement, or run
+`UPDATE tariff_config SET mode = 'fixed' WHERE id = 1;`.
+
+**How `dynamic` works**
+
+- The module reads the price of the current slot from the table `spot_prices` (60 or 15 minutes, see `interval_min`). It takes
+  the newest price at or before the slot. A price older than `HW_TARIFF_MAX_SLOT_AGE_HOURS` (36 h) does not count.
 - If it finds no price, it fetches the prices of today and tomorrow from `https://www.elprisetjustnu.se/api/v1/prices/` for the
-  zone in `area`, and tries again. It fetches at most once in `HW_TARIFF_SYNC_COOLDOWN` seconds (300 s). The request names the
-  program (`User-Agent: HomeWizard-P1-Monitor`): the service answers 403 to the default Python name. A failed fetch is logged as
-  `[SPOT_ERR]`.
-- If there is still no spot price, the price falls back to the fixed price.
-- The final price is `(base + add_sek) * (1 + vat_pct / 100)`.
-- The cost on the pages is the energy of the period times the **current** price. It is not a sum of the real price of each hour.
+  zone in `area`, and tries again. It fetches at most once in `HW_TARIFF_SYNC_COOLDOWN` seconds (300 s). The service returns a
+  price for every quarter of an hour (96 a day). With `interval_min` 60 the program uses the price of the first quarter of the
+  hour, with 15 it uses the price of the quarter.
+- The request names the program (`User-Agent: HomeWizard-P1-Monitor`): the service answers 403 to the default Python name. A
+  failed fetch is logged as `[SPOT_ERR]`. The prices of tomorrow are not there before the afternoon, so one `[SPOT_ERR]` line
+  with 404 for tomorrow is normal.
+- If there is still no spot price, the price falls back to `fixed_sek`.
+- The cost on the pages is the energy of the **whole period** times the **current** price. It is not a sum of the real price of
+  each hour. With `fixed` this is exact. With `dynamic` every cost on the pages (day, week, month and year) changes when the
+  price of the slot changes, so read it as a guide and not as an invoice. If your contract is priced on the monthly average, the
+  current spot price is only a rough guide to it.
+
+**Use a price service outside Sweden**
+
+`elprisetjustnu.se` covers the four Swedish zones only. There are three ways to use the program elsewhere, from the least to the
+most work:
+
+1. **Use `fixed`.** No code. Set `fixed_sek` to your price, and change it by hand when the price changes:
+   `UPDATE tariff_config SET fixed_sek = 0.95 WHERE id = 1;`.
+2. **Fill `spot_prices` yourself.** No change of the program. Run a script (for example from cron, once a day when the prices of
+   tomorrow are out) that writes one row for each slot, in the format below. The program only reads the table. When a slot has no
+   row, it still asks the Swedish service, logs `[SPOT_ERR]` and uses `fixed_sek` for that slot, so keep the table filled ahead.
+3. **Replace the fetch.** Change the function `fetch_day_spots(db_path, area, day_str)` in `tariff_mod.py`. `sync_spots` calls it
+   for today and tomorrow, at most once in `HW_TARIFF_SYNC_COOLDOWN` seconds. `day_str` is the local day, `YYYY-MM-DD`, and
+   `area` is the value in `tariff_config`, so write your own zone code there (for example `NO1`). A skeleton:
+
+```python
+def fetch_day_spots(db_path, area, day_str):
+    """Store the prices of one local day. Never raise."""
+    url = f"https://prices.example/{area}/{day_str}.json"  # your service
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    try:
+        with urllib.request.urlopen(req, timeout=6) as resp:
+            items = json.loads(resp.read().decode())
+    except Exception as e:
+        print(f"[SPOT_ERR] {day_str} {area}: {type(e).__name__}: {e}", flush=True)
+        return
+    c = sqlite3.connect(db_path, timeout=10.0)
+    try:
+        for it in items:
+            slot_key = ...  # "YYYY-MM-DD HH:MM": the local time at the start of the slot
+            price = ...     # per kWh, before add_sek and VAT, in the currency you want to show
+            c.execute("INSERT OR REPLACE INTO spot_prices(slot_key, sek_per_kwh) VALUES(?,?)", (slot_key, float(price)))
+        c.commit()
+    finally:
+        c.close()
+```
+
+The rules of the contract, for the second and third way:
+
+- **One row for each slot:** `slot_key` is `YYYY-MM-DD HH:MM` in the **local time of the host** (the lookup uses SQLite
+  `'localtime'`, so set the time zone of the host). The minutes are `00` for `interval_min` 60, and `00`, `15`, `30` and `45` for 15.
+  `sek_per_kwh` is a price per **kWh**. Many services give a price per MWh: divide by 1000.
+- **The currency is a label.** The column and the pages say SEK, but the number is shown as it is. To show another currency, change
+  the text `SEK` in `ui.html`.
+- **The function never raises** and logs `[SPOT_ERR]` with the day, the area and the kind of error. It must not log the text of
+  an answer that holds anything private. Use only the standard library (`urllib`), as the rest of the program does.
+- **The price service needs a way out.** A firewall or a router rule that blocks outgoing traffic must allow the new host.
+- **Test it** with a copy of the class `FetchTests` in `tests/test_tariff.py`. The tests replace `urllib.request.urlopen`, so they
+  need no network.
 
 ## Web server and routes
 

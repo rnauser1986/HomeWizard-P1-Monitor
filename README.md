@@ -95,6 +95,29 @@ See "Move an older install to this layout" in [`docs/ARCHITECTURE.md`](docs/ARCH
 
 The program has no sign-in. Use it on the home network only, or through a VPN. Never open a port to the internet.
 
+## Electricity price
+
+The pages show a cost next to the energy. The cost is the energy of the period times a price per kWh, and the price comes from one
+of two modes:
+
+- **`fixed`** (the default): one price all the time, `HW_DEFAULT_FIXED_SEK` (1.5 SEK per kWh in `.env.example`). Use it for a
+  contract with a fixed price. Change the number to your own price.
+- **`dynamic`**: the spot price of the current hour or quarter, fetched from `elprisetjustnu.se`. It works for the four
+  **Swedish** zones (`SE1` to `SE4`) only. Use it for a contract that follows the market.
+
+Both add a surcharge (`add_sek`) and VAT (`vat_pct`). To switch to `dynamic`, write one row in the database:
+
+```sh
+sqlite3 /opt/homewizard/homewizard.db \
+  "INSERT OR REPLACE INTO tariff_config (id, start_date, mode, interval_min, area, fixed_sek, add_sek, vat_pct) \
+   VALUES (1, '2026-11-01', 'dynamic', 60, 'SE3', 1.50, 0.08, 25.0);"
+```
+
+The cost on the pages is the energy of the whole period times the **current** price, so with `dynamic` it is a guide and not an
+invoice. If you live outside Sweden, use `fixed`, fill the price table yourself or replace the fetch: see "Price and tariff" in
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#price-and-tariff) for every setting, the Docker command and a skeleton for another
+price service.
+
 ## Files
 
 | File | Job |
