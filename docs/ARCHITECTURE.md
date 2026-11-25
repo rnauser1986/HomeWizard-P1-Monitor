@@ -179,7 +179,9 @@ its memory stays small. It catches every exception and prints `[SIGNAL_ERR] ...`
 - With `mode` set to `dynamic`, the module reads the price of the current slot (60 or 15 minutes) from `spot_prices`. It takes the
   newest price at or before the slot. A price older than `HW_TARIFF_MAX_SLOT_AGE_HOURS` (36 h) does not count.
 - If it finds no price, it fetches the prices of today and tomorrow from `https://www.elprisetjustnu.se/api/v1/prices/` for the
-  zone in `area`, and tries again. It fetches at most once in `HW_TARIFF_SYNC_COOLDOWN` seconds (300 s).
+  zone in `area`, and tries again. It fetches at most once in `HW_TARIFF_SYNC_COOLDOWN` seconds (300 s). The request names the
+  program (`User-Agent: HomeWizard-P1-Monitor`): the service answers 403 to the default Python name. A failed fetch is logged as
+  `[SPOT_ERR]`.
 - If there is still no spot price, the price falls back to the fixed price.
 - The final price is `(base + add_sek) * (1 + vat_pct / 100)`.
 - The cost on the pages is the energy of the period times the **current** price. It is not a sum of the real price of each hour.
@@ -606,7 +608,7 @@ request. Where a test can show the gap, it is an `expectedFailure` test until th
 5. **The time zone `Europe/Stockholm` and the locale `sv-SE` are fixed in `pq_page.py`.** The statistics page writes the numbers of its
    tooltips with a decimal comma. SQLite `'localtime'` uses the time zone of the host.
 6. **A page request can wait for the price service.** In `dynamic` mode, `effective_rate` calls `elprisetjustnu.se` (two calls with a
-   timeout of 6 s) when a spot price is missing, at most once in `HW_TARIFF_SYNC_COOLDOWN` seconds. A failed call leaves no log line.
+   timeout of 6 s) when a spot price is missing, at most once in `HW_TARIFF_SYNC_COOLDOWN` seconds.
 7. **The server has no sign-in** and listens on all interfaces by default. See Architecture.
 8. **Some SQL text is put together from fixed pieces.** `m_kwh` and `calc_standby_from_w` in `api_server.py` take the `WHERE` text
    as an argument, and `pq_data.py` puts the fixed text `DV_EXPR` and the bucket expression into its queries. The callers pass fixed

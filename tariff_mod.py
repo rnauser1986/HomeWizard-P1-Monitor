@@ -12,6 +12,7 @@ from config import (
     TARIFF_SYNC_COOLDOWN_SEC as SYNC_COOLDOWN_SEC,
 )
 
+USER_AGENT = "HomeWizard-P1-Monitor"
 _last_sync_attempt = 0.0
 
 
@@ -40,13 +41,18 @@ def apply_tariff(base_sek, cfg):
 def fetch_day_spots(db_path, area, day_str):
     y, m, d = day_str.split("-")
     url = f"https://www.elprisetjustnu.se/api/v1/prices/{y}/{m}-{d}_{area}.json"
+    # The price service answers 403 to the default Python name, so the request names the program.
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     try:
-        with urllib.request.urlopen(url, timeout=6) as resp:
+        with urllib.request.urlopen(req, timeout=6) as resp:
             items = json.loads(resp.read().decode())
-    except Exception:
+    except Exception as e:
+        # At most two lines in each HW_TARIFF_SYNC_COOLDOWN. Tomorrow's prices are not there before the afternoon.
+        print(f"[SPOT_ERR] {day_str} {area}: {type(e).__name__}: {e}", flush=True)
         return
 
     if not isinstance(items, list):
+        print(f"[SPOT_ERR] {day_str} {area}: the answer is not a list", flush=True)
         return
 
     c = sqlite3.connect(db_path, timeout=10.0)

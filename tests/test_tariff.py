@@ -134,7 +134,10 @@ class FetchTests(TariffTestCase):
                  {"time_start": "2026-11-24T13:00:00+01:00", "SEK_per_kWh": "0.75"}]
         with mock.patch("urllib.request.urlopen", return_value=reply(items)) as urlopen:
             self.mod.fetch_day_spots(self.path, "SE3", "2026-11-24")
-        self.assertIn("2026/11-24_SE3.json", urlopen.call_args.args[0])
+        request = urlopen.call_args.args[0]
+        self.assertIn("2026/11-24_SE3.json", request.full_url)
+        # The service answers 403 to the default Python name.
+        self.assertEqual(request.get_header("User-agent"), "HomeWizard-P1-Monitor")
         self.assertEqual(self.stored(), {"2026-11-24 12:00": 0.5, "2026-11-24 13:00": 0.75})
 
     def test_bad_items_are_skipped(self):
@@ -155,6 +158,19 @@ class FetchTests(TariffTestCase):
         with mock.patch("urllib.request.urlopen", side_effect=OSError("down")):
             self.mod.fetch_day_spots(self.path, "SE3", "2026-11-24")
         self.assertEqual(self.stored(), {})
+
+    def test_a_failed_fetch_is_logged(self):
+        with mock.patch("urllib.request.urlopen", side_effect=OSError("down")), \
+                mock.patch("builtins.print") as printed:
+            self.mod.fetch_day_spots(self.path, "SE3", "2026-11-24")
+        line = printed.call_args.args[0]
+        self.assertIn("[SPOT_ERR] 2026-11-24 SE3: OSError", line)
+
+    def test_an_answer_that_is_not_a_list_is_logged(self):
+        with mock.patch("urllib.request.urlopen", return_value=reply({"error": "x"})), \
+                mock.patch("builtins.print") as printed:
+            self.mod.fetch_day_spots(self.path, "SE3", "2026-11-24")
+        self.assertIn("[SPOT_ERR]", printed.call_args.args[0])
 
 
 if __name__ == "__main__":
