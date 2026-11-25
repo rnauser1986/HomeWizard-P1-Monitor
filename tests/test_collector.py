@@ -66,6 +66,62 @@ class InitDbTests(unittest.TestCase):
             conn.close()
 
 
+class NormalizeTimestampsTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = fresh("collector")
+        self.path = os.path.join(tempfile.mkdtemp(prefix="hw-test-"), "t.db")
+
+    def stored(self, *times):
+        conn = self.mod.init_db(self.path)
+        for ts in times:
+            conn.execute("INSERT INTO measurements (ts_utc, raw_json) VALUES (?, '{}')", (ts,))
+        conn.commit()
+        conn.close()
+
+    def times(self):
+        conn = sqlite3.connect(self.path)
+        try:
+            return [r[0] for r in conn.execute("SELECT ts_utc FROM measurements ORDER BY id")]
+        finally:
+            conn.close()
+
+    def test_a_time_with_a_space_gets_the_same_format_as_a_polled_time(self):
+        self.stored("2026-11-09 23:15:00")
+        self.mod.init_db(self.path).close()
+        self.assertEqual(self.times(), ["2026-11-09T23:15:00+00:00"])
+
+    def test_polled_times_are_left_alone(self):
+        polled = "2026-11-19T19:17:54.509249+00:00"
+        self.stored(polled, "2026-11-19T19:18:04+00:00")
+        self.mod.init_db(self.path).close()
+        self.assertEqual(self.times(), [polled, "2026-11-19T19:18:04+00:00"])
+
+    def test_the_row_count_and_the_order_stay_the_same(self):
+        self.stored("2026-11-09 23:00:00", "2026-11-09 23:15:00", "2026-11-19T19:17:54+00:00")
+        self.mod.init_db(self.path).close()
+        self.assertEqual(len(self.times()), 3)
+        self.assertEqual(self.times(), sorted(self.times()))
+
+    def test_it_returns_how_many_rows_it_changed_and_zero_the_next_time(self):
+        conn = self.mod.init_db(self.path)
+        conn.execute("INSERT INTO measurements (ts_utc, raw_json) VALUES ('2026-11-09 23:00:00', '{}')")
+        conn.commit()
+        self.assertEqual(self.mod.normalize_timestamps(conn), 1)
+        self.assertEqual(self.mod.normalize_timestamps(conn), 0)
+        conn.close()
+
+    def test_a_day_edge_counts_the_same_rows_after_the_rewrite(self):
+        self.stored(*[f"2026-11-09 23:{m:02d}:00" for m in (0, 15, 30, 45)])
+        self.mod.init_db(self.path).close()
+        conn = sqlite3.connect(self.path)
+        try:
+            n = conn.execute("SELECT COUNT(*) FROM measurements WHERE ts_utc >= ? AND ts_utc < ?",
+                             ("2026-11-09T23:00:00", "2026-11-10T23:00:00")).fetchone()[0]
+        finally:
+            conn.close()
+        self.assertEqual(n, 4)
+
+
 class PollOnceTests(unittest.TestCase):
     def setUp(self):
         self.mod = fresh("collector")

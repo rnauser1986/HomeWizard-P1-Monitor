@@ -28,6 +28,7 @@ def init_db(db_path):
     c = sqlite3.connect(db_path, timeout=5.0)
     try:
         _create_schema(c)
+        normalize_timestamps(c)
     except BaseException:
         c.close()
         raise
@@ -88,6 +89,20 @@ def _create_schema(c):
     )
     """)
     c.commit()
+
+
+def normalize_timestamps(c):
+    """Rewrite a ts_utc without a "T" (for example "2026-11-19 19:15:00" from an import) to "2026-11-19T19:15:00+00:00".
+
+    The period queries compare ts_utc as text. A space sorts before "T", so a row with a space lands in the wrong day at the
+    edge of a period. The column holds UTC, so only the separator and the offset change. Returns the number of rows changed."""
+    n = c.execute(
+        "UPDATE measurements SET ts_utc = replace(ts_utc, ' ', 'T') || '+00:00' WHERE ts_utc NOT LIKE '%T%'"
+    ).rowcount
+    c.commit()
+    if n:
+        print(f"[START] collector: wrote {n} old timestamps in the same format as the new ones", flush=True)
+    return n
 
 
 def describe_start():

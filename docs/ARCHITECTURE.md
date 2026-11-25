@@ -73,7 +73,7 @@ fast local storage. WAL does not work well on a network mount.
   converts with `'localtime'`, so the host must have the right time zone.
 - A row imported from CSV has `"source":"csv_import"` in `raw_json`. The kWh totals skip these rows. Their energy comes from
   `historical_kwh`. An imported row must have `ts_utc` in the same text format as a polled row (`YYYY-MM-DDTHH:MM:SS...`), because
-  the queries compare `ts_utc` as text.
+  the queries compare `ts_utc` as text. At every start the collector rewrites a `ts_utc` without a `T` (for example `2026-11-19 19:15:00`) to the polled format `2026-11-19T19:15:00+00:00`, so an import with the wrong format is repaired.
 
 **Queries and performance**
 
