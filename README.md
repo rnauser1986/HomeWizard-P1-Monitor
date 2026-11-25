@@ -29,7 +29,25 @@ window. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#pages) for every card 
 
 You need:
 
-1. **A HomeWizard P1 meter**, plugged into the P1 port of your smart electricity meter and connected to your Wi-Fi.
+1. **A smart electricity meter, and a HomeWizard P1 meter that fits it.** The HomeWizard P1 meter is a small Wi-Fi device that
+   plugs into a port on your electricity meter and reads the data from there. A meter without such a port (an old meter with a
+   turning disc, for example) cannot be read. Check these things before you buy:
+   - **Your meter needs a P1 or HAN port.** HomeWizard says that all modern meters in Sweden have one of them and work with the
+     Wi-Fi P1 meter. The port is a small socket on the meter, often under a cover. If you are not sure, ask your grid operator
+     (the company that owns the meter) or look up the model of the meter on HomeWizard's compatibility page (the link below).
+   - **A meter with a P1 port (RJ12 connector)** takes the P1 meter directly: it clicks into the port.
+   - **A meter with a HAN port (RJ45 connector)** needs HomeWizard's **HAN converter**, an adapter between the port and the P1
+     meter, and a **USB-C power supply**, because this kind of port gives no power. HomeWizard says that orders from
+     homewizard.se since 9 January 2024 include a free HAN converter that works with both port types. The power supply is not in the
+     box for meters with an RJ45 HAN port, and neither for Kamstrup meters in Sweden. Buy one if you need it.
+   - **Some grid operators must switch on the port first.** HomeWizard writes that some meters may need the network operator
+     to enable the HAN port. Ask yours if the meter gives no data.
+   - **Other countries:** HomeWizard lists the Netherlands, Belgium, Luxembourg, Denmark, Hungary, Sweden, Finland, Austria, Norway,
+     Lithuania and Switzerland, with different rules for each. In Denmark and Norway a HAN port needs the converter.
+
+   The list of meter models and the rules change over time. Read HomeWizard's own compatibility page before you buy:
+   [Which smart meters work with the P1 meter](https://helpdesk.homewizard.com/articles/5935311). Then plug the meter in and
+   connect it to your Wi-Fi with the HomeWizard Energy app.
 2. **The Local API turned on.** HomeWizard's help article says: open the HomeWizard Energy app, go to **Settings > Meters**, choose
    the meter and turn on **Local API** ([HomeWizard help article](https://helpdesk.homewizard.com/articles/5935977)). The menus
    can change between versions of the app. If you do not find it, search the help pages for "Local API". This program uses
